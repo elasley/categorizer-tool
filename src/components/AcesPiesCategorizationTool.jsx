@@ -1,4 +1,3 @@
-// src/components/AcesPiesCategorizationTool.jsx - Complete Integration
 import React, { useState, useMemo } from "react";
 import {
   Search,
@@ -19,7 +18,6 @@ import {
   Brain,
 } from "lucide-react";
 
-// Import all components and utilities
 import FileUpload from "./FileUpload";
 import ProductRow from "./ProductRow";
 import StatsPanel from "./StatsPanel";
@@ -44,12 +42,10 @@ const AcesPiesCategorizationTool = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [validationResults, setValidationResults] = useState(null);
 
-  // Advanced features state
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showTaxonomyManager, setShowTaxonomyManager] = useState(false);
   const [showBulkAssignmentTool, setShowBulkAssignmentTool] = useState(false);
 
-  // Configuration state
   const [confidenceThreshold, setConfidenceThreshold] = useState(70);
   const [useOpenAI, setUseOpenAI] = useState(false);
   const [processingProgress, setProcessingProgress] = useState({
@@ -60,7 +56,6 @@ const AcesPiesCategorizationTool = () => {
 
   const itemsPerPage = 50;
 
-  // Calculate OpenAI cost estimate when products change
   React.useEffect(() => {
     if (products.length > 0 && useOpenAI) {
       const costEstimate = estimateOpenAICost(products.length);
@@ -82,7 +77,6 @@ const AcesPiesCategorizationTool = () => {
     setCurrentPage(1);
   };
 
-  // Auto-suggest categorization
   const autoSuggestAll = async () => {
     if (products.length === 0) {
       alert("Please upload products first");
@@ -96,9 +90,7 @@ const AcesPiesCategorizationTool = () => {
     }
   };
 
-  // OpenAI categorization
   const handleOpenAICategorization = async () => {
-    // Check for API key
     if (!process.env.REACT_APP_OPENAI_API_KEY) {
       alert(
         "OpenAI API key is required. Please add REACT_APP_OPENAI_API_KEY to your .env file."
