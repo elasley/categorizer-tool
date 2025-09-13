@@ -1,7 +1,16 @@
 // src/components/FileUpload.jsx
-import React, { useState, useRef } from 'react';
-import { Upload, Loader, FileText, AlertCircle, CheckCircle, X, HelpCircle, Download } from 'lucide-react';
-import { parseCSV, validateCSV, generateSampleCSV } from '../utils/csvParser';
+import React, { useState, useRef } from "react";
+import {
+  Upload,
+  Loader,
+  FileText,
+  AlertCircle,
+  CheckCircle,
+  X,
+  HelpCircle,
+  Download,
+} from "lucide-react";
+import { parseCSV, validateCSV, generateSampleCSV } from "../utils/csvParser";
 
 const FileUpload = ({ onFileUpload, isProcessing }) => {
   const [dragOver, setDragOver] = useState(false);
@@ -33,7 +42,7 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
   const handleDrop = (event) => {
     event.preventDefault();
     setDragOver(false);
-    
+
     const files = event.dataTransfer.files;
     if (files.length > 0) {
       processFile(files[0]);
@@ -43,75 +52,73 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
   // Process selected file
   const processFile = async (file) => {
     // Validate file type
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      setUploadStatus('error');
-      setFileInfo({ 
-        name: file.name, 
-        size: formatFileSize(file.size), 
-        error: 'Please select a CSV file' 
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setUploadStatus("error");
+      setFileInfo({
+        name: file.name,
+        size: formatFileSize(file.size),
+        error: "Please select a CSV file",
       });
       return;
     }
 
     // Validate file size (max 50MB)
     if (file.size > 50 * 1024 * 1024) {
-      setUploadStatus('error');
-      setFileInfo({ 
-        name: file.name, 
-        size: formatFileSize(file.size), 
-        error: 'File too large. Maximum size is 50MB' 
+      setUploadStatus("error");
+      setFileInfo({
+        name: file.name,
+        size: formatFileSize(file.size),
+        error: "File too large. Maximum size is 50MB",
       });
       return;
     }
 
-    setUploadStatus('processing');
-    setFileInfo({ 
-      name: file.name, 
+    setUploadStatus("processing");
+    setFileInfo({
+      name: file.name,
       size: formatFileSize(file.size),
-      type: file.type || 'text/csv'
+      type: file.type || "text/csv",
     });
 
     try {
       // Parse CSV file
       const products = await parseCSV(file);
-      
+
       // Validate parsed data
       const validation = validateCSV(products);
       setValidationResults(validation);
-      
+
       if (!validation.isValid) {
-        setUploadStatus('error');
-        setFileInfo(prev => ({
+        setUploadStatus("error");
+        setFileInfo((prev) => ({
           ...prev,
-          error: validation.errors.join('; ')
+          error: validation.errors.join("; "),
         }));
         return;
       }
-      
-      setUploadStatus('success');
-      
+
+      setUploadStatus("success");
+
       // Call parent handler with parsed data
       if (onFileUpload) {
         onFileUpload(products, validation);
       }
-      
     } catch (error) {
-      setUploadStatus('error');
-      setFileInfo(prev => ({
+      setUploadStatus("error");
+      setFileInfo((prev) => ({
         ...prev,
-        error: error.message
+        error: error.message,
       }));
-      console.error('CSV processing failed:', error);
     }
   };
 
   // Format file size for display
   const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
+    if (bytes === 0) return "0 Bytes";
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
   // Clear file selection
@@ -120,24 +127,24 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
     setUploadStatus(null);
     setValidationResults(null);
     if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      fileInputRef.current.value = "";
     }
   };
 
   // Update status based on processing prop
   React.useEffect(() => {
-    if (!isProcessing && uploadStatus === 'processing') {
+    if (!isProcessing && uploadStatus === "processing") {
       // Processing completed externally
     }
   }, [isProcessing, uploadStatus]);
 
   const getStatusIcon = () => {
     switch (uploadStatus) {
-      case 'processing':
+      case "processing":
         return <Loader className="w-5 h-5 text-blue-500 animate-spin" />;
-      case 'success':
+      case "success":
         return <CheckCircle className="w-5 h-5 text-green-500" />;
-      case 'error':
+      case "error":
         return <AlertCircle className="w-5 h-5 text-red-500" />;
       default:
         return <FileText className="w-5 h-5 text-gray-400" />;
@@ -146,23 +153,27 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
 
   const getStatusColor = () => {
     switch (uploadStatus) {
-      case 'processing': return 'border-blue-300 bg-blue-50';
-      case 'success': return 'border-green-300 bg-green-50';
-      case 'error': return 'border-red-300 bg-red-50';
-      default: return 'border-gray-300 bg-white';
+      case "processing":
+        return "border-blue-300 bg-blue-50";
+      case "success":
+        return "border-green-300 bg-green-50";
+      case "error":
+        return "border-red-300 bg-red-50";
+      default:
+        return "border-gray-300 bg-white";
     }
   };
 
   return (
     <div className="mb-6">
       {/* File Upload Area */}
-      <div 
+      <div
         className={`relative p-8 border-2 border-dashed rounded-lg transition-all duration-200 ${
-          dragOver 
-            ? 'border-blue-400 bg-blue-50' 
-            : fileInfo 
-              ? getStatusColor()
-              : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'
+          dragOver
+            ? "border-blue-400 bg-blue-50"
+            : fileInfo
+            ? getStatusColor()
+            : "border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100"
         }`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -184,7 +195,9 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
               <div className="flex items-center justify-center space-x-3">
                 {getStatusIcon()}
                 <div className="text-left">
-                  <div className="font-medium text-gray-900">{fileInfo.name}</div>
+                  <div className="font-medium text-gray-900">
+                    {fileInfo.name}
+                  </div>
                   <div className="text-sm text-gray-500">
                     {fileInfo.size} • {fileInfo.type}
                   </div>
@@ -192,7 +205,7 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
                 <button
                   onClick={clearFile}
                   className="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors"
-                  disabled={uploadStatus === 'processing'}
+                  disabled={uploadStatus === "processing"}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -202,12 +215,14 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
                 <div className="p-3 bg-red-100 border border-red-200 rounded-lg">
                   <div className="flex items-center space-x-2 text-red-800">
                     <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                    <span className="text-sm font-medium">{fileInfo.error}</span>
+                    <span className="text-sm font-medium">
+                      {fileInfo.error}
+                    </span>
                   </div>
                 </div>
               )}
 
-              {uploadStatus === 'processing' && (
+              {uploadStatus === "processing" && (
                 <div className="p-3 bg-blue-100 border border-blue-200 rounded-lg">
                   <div className="text-blue-800 text-sm font-medium">
                     Processing CSV file...
@@ -218,19 +233,20 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
                 </div>
               )}
 
-              {uploadStatus === 'success' && validationResults && (
+              {uploadStatus === "success" && validationResults && (
                 <div className="p-3 bg-green-100 border border-green-200 rounded-lg">
                   <div className="text-green-800 text-sm font-medium">
                     ✅ File uploaded successfully!
                   </div>
                   <div className="text-green-600 text-xs mt-1">
-                    {validationResults.stats.totalProducts} products found • 
-                    {validationResults.stats.hasName} with names • 
+                    {validationResults.stats.totalProducts} products found •
+                    {validationResults.stats.hasName} with names •
                     {validationResults.stats.hasDescription} with descriptions
                   </div>
                   {validationResults.warnings.length > 0 && (
                     <div className="mt-2 text-xs text-amber-700">
-                      ⚠️ {validationResults.warnings.length} warnings (click to view details)
+                      ⚠️ {validationResults.warnings.length} warnings (click to
+                      view details)
                     </div>
                   )}
                 </div>
@@ -252,10 +268,11 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
 
               <div>
                 <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                  {dragOver ? 'Drop your CSV file here' : 'Upload Product Data'}
+                  {dragOver ? "Drop your CSV file here" : "Upload Product Data"}
                 </h3>
                 <p className="text-gray-600 mb-4">
-                  CSV file with product names, descriptions, brands, and part numbers
+                  CSV file with product names, descriptions, brands, and part
+                  numbers
                 </p>
               </div>
 
@@ -299,24 +316,48 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
             <HelpCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-blue-800">
               <h4 className="font-semibold mb-2">CSV File Requirements</h4>
-              
+
               <div className="space-y-3">
                 <div>
                   <strong>Required Columns (any of these names work):</strong>
                   <ul className="mt-1 space-y-1 text-blue-700 text-xs">
-                    <li>• Product Name: <code>name, Name, product_name, Product Name, title, Title</code></li>
-                    <li>• Description: <code>description, Description, desc, details, specifications</code></li>
-                    <li>• Brand: <code>brand, Brand, manufacturer, Manufacturer, mfg</code></li>
-                    <li>• Part Number: <code>part_number, Part Number, sku, SKU, model, mpn</code></li>
+                    <li>
+                      • Product Name:{" "}
+                      <code>
+                        name, Name, product_name, Product Name, title, Title
+                      </code>
+                    </li>
+                    <li>
+                      • Description:{" "}
+                      <code>
+                        description, Description, desc, details, specifications
+                      </code>
+                    </li>
+                    <li>
+                      • Brand:{" "}
+                      <code>brand, Brand, manufacturer, Manufacturer, mfg</code>
+                    </li>
+                    <li>
+                      • Part Number:{" "}
+                      <code>
+                        part_number, Part Number, sku, SKU, model, mpn
+                      </code>
+                    </li>
                   </ul>
                 </div>
 
                 <div>
                   <strong>Sample CSV Format:</strong>
                   <div className="mt-1 p-2 bg-white border rounded text-xs font-mono">
-                    <div className="text-gray-600">Product Name,Description,Brand,Part Number</div>
-                    <div className="text-gray-800">3M Sandpaper P320,Body work sanding disc,3M,31542</div>
-                    <div className="text-gray-800">Gates Timing Belt,Heavy duty timing belt,Gates,T295</div>
+                    <div className="text-gray-600">
+                      Product Name,Description,Brand,Part Number
+                    </div>
+                    <div className="text-gray-800">
+                      3M Sandpaper P320,Body work sanding disc,3M,31542
+                    </div>
+                    <div className="text-gray-800">
+                      Gates Timing Belt,Heavy duty timing belt,Gates,T295
+                    </div>
                   </div>
                 </div>
 
@@ -335,7 +376,9 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
                   <strong>Processing Capacity:</strong>
                   <ul className="mt-1 space-y-1 text-blue-700 text-xs">
                     <li>• Small files (&lt;1,000 products): &lt;10 seconds</li>
-                    <li>• Medium files (1,000-5,000 products): &lt;60 seconds</li>
+                    <li>
+                      • Medium files (1,000-5,000 products): &lt;60 seconds
+                    </li>
                     <li>• Large files (5,000+ products): &lt;3 minutes</li>
                   </ul>
                 </div>
@@ -366,7 +409,9 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
       {/* Validation Details */}
       {validationResults && validationResults.warnings.length > 0 && (
         <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-          <h4 className="font-medium text-amber-900 mb-2">Data Quality Warnings</h4>
+          <h4 className="font-medium text-amber-900 mb-2">
+            Data Quality Warnings
+          </h4>
           <ul className="text-sm text-amber-800 space-y-1">
             {validationResults.warnings.slice(0, 5).map((warning, index) => (
               <li key={index} className="flex items-start">
@@ -381,7 +426,8 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
             )}
           </ul>
           <div className="mt-2 text-xs text-amber-700">
-            These warnings won't prevent processing but may affect categorization accuracy.
+            These warnings won't prevent processing but may affect
+            categorization accuracy.
           </div>
         </div>
       )}
