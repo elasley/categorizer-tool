@@ -6,6 +6,8 @@ import {
   CheckCircle,
   AlertTriangle,
   ExternalLink,
+  CircleCheck,
+  Check,
 } from "lucide-react";
 import { stripHtmlTags } from "../utils/textUtils";
 
@@ -234,11 +236,54 @@ const ProductRow = ({
     );
   };
 
+  const handleRowClick = (e) => {
+    if (
+      e.target.tagName === "BUTTON" ||
+      e.target.tagName === "INPUT" ||
+      e.target.tagName === "SELECT" ||
+      e.target.tagName === "TEXTAREA" ||
+      e.target.closest("button") ||
+      isEditing
+    ) {
+      return;
+    }
+    setIsEditing(true);
+  };
+
   return (
-    <tr className="hover:bg-gray-50">
-      <td className="px-6 py-4 min-w-80">
+    <tr
+      className={`transition-colors duration-200 ${
+        isEditing
+          ? "bg-blue-50 hover:bg-gray-50 "
+          : "hover:bg-gray-50 cursor-pointer"
+      }`}
+      onClick={handleRowClick}
+    >
+      <td className="px-6 py-4 min-w-80 relative">
         <div className="space-y-3">
-          <div className="font-medium text-gray-900">
+          {isEditing && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCancel();
+                }}
+                className="h-6 flex justify-center items-center w-6 absolute text-xs bg-red-600 top-1 left-8 text-white rounded-full "
+              >
+                <X size={15} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSave();
+                }}
+                className="h-6 flex justify-center items-center w-6 absolute text-xs bg-green-600 top-1 left-1 text-white rounded-full "
+              >
+                <Check size={15} />
+              </button>
+            </div>
+          )}
+          <div className="font-medium text-gray-900 relative group">
             {isEditing ? (
               <div className="space-y-1">
                 <label className="text-xs text-gray-500 font-medium">
@@ -250,12 +295,16 @@ const ProductRow = ({
                   onChange={(e) => handleFieldChange("title", e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   placeholder="Enter product title"
+                  onClick={(e) => e.stopPropagation()}
                 />
               </div>
             ) : (
-              <span title={stripHtmlTags(product.title)}>
-                {truncateText(product.title, 60) || "Unnamed Product"}
-              </span>
+              <div className="flex items-center group">
+                <span title={stripHtmlTags(product.title)} className="flex-1">
+                  {truncateText(product.title, 60) || "Unnamed Product"}
+                </span>
+                <Edit2 className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-2 flex-shrink-0" />
+              </div>
             )}
           </div>
 
@@ -271,6 +320,7 @@ const ProductRow = ({
                     onChange={(e) =>
                       handleFieldChange("description", e.target.value)
                     }
+                    onClick={(e) => e.stopPropagation()}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y"
                     rows={4}
                     placeholder="Enter product description"
@@ -305,6 +355,7 @@ const ProductRow = ({
               onChange={(e) =>
                 handleFieldChange("suggestedCategory", e.target.value)
               }
+              onClick={(e) => e.stopPropagation()}
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="">Select Category</option>
@@ -341,6 +392,7 @@ const ProductRow = ({
                 onChange={(e) =>
                   handleFieldChange("suggestedSubcategory", e.target.value)
                 }
+                onClick={(e) => e.stopPropagation()}
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 disabled={!editData.suggestedCategory}
               >
@@ -366,6 +418,7 @@ const ProductRow = ({
                   value={customSubcategory}
                   onChange={(e) => setCustomSubcategory(e.target.value)}
                   placeholder="Enter custom subcategory"
+                  onClick={(e) => e.stopPropagation()}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   onKeyPress={(e) => {
                     if (e.key === "Enter") {
@@ -375,13 +428,17 @@ const ProductRow = ({
                 />
                 <div className="flex space-x-2">
                   <button
-                    onClick={handleCustomSubcategorySubmit}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCustomSubcategorySubmit();
+                    }}
                     className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
                   >
                     Add
                   </button>
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setShowCustomSubcategory(false);
                       setCustomSubcategory("");
                     }}
@@ -430,6 +487,7 @@ const ProductRow = ({
                     handleFieldChange("suggestedPartType", e.target.value);
                   }
                 }}
+                onClick={(e) => e.stopPropagation()}
                 className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 disabled={
                   !editData.suggestedCategory || !editData.suggestedSubcategory
@@ -461,6 +519,7 @@ const ProductRow = ({
                   value={customPartType}
                   onChange={(e) => setCustomPartType(e.target.value)}
                   placeholder="Enter custom part type"
+                  onClick={(e) => e.stopPropagation()}
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && customPartType.trim()) {
@@ -474,14 +533,18 @@ const ProductRow = ({
                 />
                 <div className="flex space-x-2">
                   <button
-                    onClick={handleCustomPartTypeSubmit}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCustomPartTypeSubmit();
+                    }}
                     disabled={!customPartType.trim()}
                     className="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
                     Add
                   </button>
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setShowCustomPartType(false);
                       setCustomPartType("");
                     }}
@@ -588,30 +651,42 @@ const ProductRow = ({
       {/* Actions */}
       <td className="px-6 py-4">
         {isEditing ? (
-          <div className="flex flex-col space-y-2">
+          <div className="flex items-center space-x-2">
             <button
-              onClick={handleSave}
-              className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSave();
+              }}
+              className="inline-flex items-center justify-center w-10 h-10 border border-transparent text-sm font-medium rounded-full text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
+              title="Save changes (Ctrl+Enter)"
             >
-              <Save className="w-4 h-4 mr-2" />
-              Save
+              <Save className="w-5 h-5" />
             </button>
             <button
-              onClick={handleCancel}
-              className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCancel();
+              }}
+              className="inline-flex items-center justify-center w-10 h-10 border border-gray-300 text-sm font-medium rounded-full text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-all duration-200 shadow-sm hover:shadow-md"
+              title="Cancel editing (Esc)"
             >
-              <X className="w-4 h-4 mr-2" />
-              Cancel
+              <X className="w-4 h-4" />
             </button>
           </div>
         ) : (
-          <button
-            onClick={() => setIsEditing(true)}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <Edit2 className="w-4 h-4 mr-2" />
-            Edit
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsEditing(true);
+              }}
+              className="inline-flex items-center justify-center py-2 px-3 border border-gray-300 text-sm font-medium rounded-lg text-white bg-green-500  hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200 shadow-sm"
+              title="Edit product"
+            >
+              <Edit2 className="w-3 h-3 mr-3" />
+              Edit
+            </button>
+          </div>
         )}
       </td>
     </tr>
