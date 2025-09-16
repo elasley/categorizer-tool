@@ -30,7 +30,6 @@ export const parseCSVText = (csvText) => {
   let currentField = "";
   let inQuotes = false;
 
-  // Normalize line endings
   const normalizedText = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
   for (let i = 0; i < normalizedText.length; i++) {
@@ -40,7 +39,7 @@ export const parseCSVText = (csvText) => {
     if (char === '"') {
       if (inQuotes && nextChar === '"') {
         currentField += '"';
-        i++; // Skip next quote
+        i++;
       } else if (!inQuotes) {
         inQuotes = true;
       } else {
@@ -134,6 +133,10 @@ const convertToProducts = (rows) => {
       headers.forEach((header, i) => {
         product[header] = row[i] || "";
       });
+
+      if (!product.name && product.title) {
+        product.name = product.title;
+      }
 
       const hasData = Object.values(product).some(
         (value) => typeof value === "string" && value.length > 2

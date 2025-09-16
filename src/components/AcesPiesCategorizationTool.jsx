@@ -98,7 +98,8 @@ const AcesPiesCategorizationTool = () => {
       return;
     }
 
-    // Cost confirmation
+    console.log("Estimated OpenAI Cost:", estimatedCost);
+
     if (estimatedCost && estimatedCost.estimatedCost > 5) {
       const confirmed = window.confirm(
         `OpenAI categorization will cost approximately $${estimatedCost.estimatedCost.toFixed(
@@ -130,10 +131,10 @@ const AcesPiesCategorizationTool = () => {
         return {
           ...product,
           status,
-          suggestedCategory: product.category || product.suggestedCategory,
-          suggestedSubcategory:
-            product.subcategory || product.suggestedSubcategory,
-          suggestedPartType: product.partType || product.suggestedPartType,
+          // Always use the AI-suggested fields, not the uploaded file's original fields
+          suggestedCategory: product.suggestedCategory,
+          suggestedSubcategory: product.suggestedSubcategory,
+          suggestedPartType: product.suggestedPartType,
         };
       });
 
@@ -160,6 +161,18 @@ const AcesPiesCategorizationTool = () => {
           setProcessingProgress({ current, total });
         }
       );
+
+      // Log products that are not categorized or have low confidence
+      categorizedProducts.forEach((product, idx) => {
+        if (!product.suggestedCategory) {
+          console.warn(`Product #${idx + 1} not categorized:`, product);
+        } else if (product.confidence <= 40) {
+          console.info(
+            `Product #${idx + 1} low confidence (${product.confidence}):`,
+            product
+          );
+        }
+      });
 
       setProducts(categorizedProducts);
     } catch (error) {
@@ -235,7 +248,12 @@ const AcesPiesCategorizationTool = () => {
   };
 
   const handleBulkUpdateProducts = (updatedProducts) => {
-    setProducts(updatedProducts);
+    setProducts((prevProducts) =>
+      prevProducts.map((p) => {
+        const updated = updatedProducts.find((u) => u.id === p.id);
+        return updated ? { ...p, ...updated } : p;
+      })
+    );
   };
 
   const openBulkAssignmentForProblematic = () => {
@@ -353,7 +371,6 @@ const AcesPiesCategorizationTool = () => {
             confidenceThreshold={confidenceThreshold}
           /> */}
 
-          {/* OpenAI Cost Estimation */}
           {estimatedCost && useOpenAI && (
             <div className="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
               <div className="flex items-center justify-between">

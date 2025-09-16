@@ -12,6 +12,8 @@ export const estimateOpenAICost = (productCount) => {
 
 export const batchCategorizeWithOpenAI = async (products, progressCallback) => {
   const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
+  console.log("Using OpenAI API Key:", apiKey ? "Yes" : "No");
+  console.log("API Key Length:", apiKey);
 
   if (!apiKey) {
     throw new Error(

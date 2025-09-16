@@ -49,7 +49,6 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
     }
   };
 
-  // Process selected file
   const processFile = async (file) => {
     // Validate file type
     if (!file.name.toLowerCase().endsWith(".csv")) {
