@@ -26,7 +26,10 @@ import TaxonomyManager from "./TaxonomyManager";
 import BulkAssignmentTool from "./BulkAssignmentTool";
 
 import { parseCSV, validateCSV, exportToCSV } from "../utils/csvParser";
-import { batchCategorize } from "../utils/categoryMatcher";
+import {
+  batchCategorize,
+  getCategoryMappingStats,
+} from "../utils/categoryMatcher";
 import {
   batchCategorizeWithOpenAI,
   estimateOpenAICost,
@@ -51,6 +54,8 @@ const AcesPiesCategorizationTool = () => {
   const [processingProgress, setProcessingProgress] = useState({
     current: 0,
     total: 0,
+    currentBatch: 0,
+    totalBatches: 0,
   });
   const [estimatedCost, setEstimatedCost] = useState(null);
 
@@ -98,8 +103,6 @@ const AcesPiesCategorizationTool = () => {
       return;
     }
 
-    console.log("Estimated OpenAI Cost:", estimatedCost);
-
     if (estimatedCost && estimatedCost.estimatedCost > 5) {
       const confirmed = window.confirm(
         `OpenAI categorization will cost approximately $${estimatedCost.estimatedCost.toFixed(
@@ -110,13 +113,23 @@ const AcesPiesCategorizationTool = () => {
     }
 
     setIsProcessing(true);
-    setProcessingProgress({ current: 0, total: products.length });
+    setProcessingProgress({
+      current: 0,
+      total: products.length,
+      currentBatch: 0,
+      totalBatches: 0,
+    });
 
     try {
       const categorizedProducts = await batchCategorizeWithOpenAI(
         products,
-        (current, total) => {
-          setProcessingProgress({ current, total });
+        (processedProducts, totalProducts, currentBatch, totalBatches) => {
+          setProcessingProgress({
+            current: processedProducts,
+            total: totalProducts,
+            currentBatch,
+            totalBatches,
+          });
         }
       );
 
@@ -135,6 +148,13 @@ const AcesPiesCategorizationTool = () => {
           suggestedCategory: product.suggestedCategory,
           suggestedSubcategory: product.suggestedSubcategory,
           suggestedPartType: product.suggestedPartType,
+          // Preserve original categories from import
+          originalCategory:
+            product.originalCategory || product.suggestedCategory,
+          originalSubcategory:
+            product.originalSubcategory || product.suggestedSubcategory,
+          originalPartType:
+            product.originalPartType || product.suggestedPartType,
         };
       });
 
@@ -146,19 +166,34 @@ const AcesPiesCategorizationTool = () => {
       await handleLocalCategorization();
     } finally {
       setIsProcessing(false);
-      setProcessingProgress({ current: 0, total: 0 });
+      setProcessingProgress({
+        current: 0,
+        total: 0,
+        currentBatch: 0,
+        totalBatches: 0,
+      });
     }
   };
 
   const handleLocalCategorization = async () => {
     setIsProcessing(true);
-    setProcessingProgress({ current: 0, total: products.length });
+    setProcessingProgress({
+      current: 0,
+      total: products.length,
+      currentBatch: 0,
+      totalBatches: 0,
+    });
 
     try {
       const categorizedProducts = await batchCategorize(
         products,
         (current, total) => {
-          setProcessingProgress({ current, total });
+          setProcessingProgress({
+            current,
+            total,
+            currentBatch: 0,
+            totalBatches: 0,
+          });
         }
       );
 
@@ -174,12 +209,28 @@ const AcesPiesCategorizationTool = () => {
         }
       });
 
-      setProducts(categorizedProducts);
+      setProducts(
+        categorizedProducts.map((product) => ({
+          ...product,
+          // Preserve original categories from import
+          originalCategory:
+            product.originalCategory || product.suggestedCategory,
+          originalSubcategory:
+            product.originalSubcategory || product.suggestedSubcategory,
+          originalPartType:
+            product.originalPartType || product.suggestedPartType,
+        }))
+      );
     } catch (error) {
       alert("Categorization failed. Please check your data and try again.");
     } finally {
       setIsProcessing(false);
-      setProcessingProgress({ current: 0, total: 0 });
+      setProcessingProgress({
+        current: 0,
+        total: 0,
+        currentBatch: 0,
+        totalBatches: 0,
+      });
     }
   };
 
@@ -401,10 +452,12 @@ const AcesPiesCategorizationTool = () => {
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-medium text-blue-900">
-                  {useOpenAI ? "AI Processing..." : "Processing..."}
+                  {useOpenAI ? "AI Batch Processing..." : "Processing..."}
                 </span>
                 <span className="text-blue-700">
-                  {processingProgress.current} / {processingProgress.total}
+                  {processingProgress.currentBatch > 0
+                    ? `Batch ${processingProgress.currentBatch}/${processingProgress.totalBatches} (${processingProgress.current}/${processingProgress.total} products)`
+                    : `${processingProgress.current}/${processingProgress.total} products`}
                 </span>
               </div>
               <div className="w-full bg-blue-200 rounded-full h-2">
@@ -454,7 +507,9 @@ const AcesPiesCategorizationTool = () => {
                   <CheckCircle className="w-4 h-4" />
                 )}
                 {isProcessing
-                  ? `Processing... ${processingProgress.current}/${processingProgress.total}`
+                  ? processingProgress.currentBatch > 0
+                    ? `Processing Batch ${processingProgress.currentBatch}/${processingProgress.totalBatches}...`
+                    : `Processing... ${processingProgress.current}/${processingProgress.total}`
                   : useOpenAI
                   ? "AI-Enhance Categories"
                   : "Auto-Suggest Categories"}

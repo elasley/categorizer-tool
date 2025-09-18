@@ -241,6 +241,25 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
                     {validationResults.stats.totalProducts} products found •
                     {validationResults.stats.hasName} with names •
                     {validationResults.stats.hasDescription} with descriptions
+                    {validationResults.stats.hasCategory > 0 && (
+                      <span>
+                        {" "}
+                        • {validationResults.stats.hasCategory} with categories
+                      </span>
+                    )}
+                    {validationResults.stats.hasSubcategory > 0 && (
+                      <span>
+                        {" "}
+                        • {validationResults.stats.hasSubcategory} with
+                        subcategories
+                      </span>
+                    )}
+                    {validationResults.stats.hasPartType > 0 && (
+                      <span>
+                        {" "}
+                        • {validationResults.stats.hasPartType} with part types
+                      </span>
+                    )}
                   </div>
                   {validationResults.warnings.length > 0 && (
                     <div className="mt-2 text-xs text-amber-700">

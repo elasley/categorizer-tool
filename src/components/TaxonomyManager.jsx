@@ -36,7 +36,7 @@ const TaxonomyManager = ({
 }) => {
   const [expandedNodes, setExpandedNodes] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedFilter, setSelectedFilter] = useState("all");
+  const [selectedFilter, setSelectedFilter] = useState("used");
   const [selectedNode, setSelectedNode] = useState(null);
   const [editingNode, setEditingNode] = useState(null);
   const [newNodeName, setNewNodeName] = useState("");
@@ -46,6 +46,81 @@ const TaxonomyManager = ({
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState(new Set());
 
+  const otherTaxonomy = useMemo(() => {
+    // Create a map of successfully categorized products
+    const successfullyCategorizedProducts = new Set();
+
+    products.forEach((product) => {
+      // A product is successfully categorized if:
+      // 1. It has a suggested category
+      // 2. The suggested category exists in ACES taxonomy
+      // 3. It has reasonable confidence (> 40%)
+      if (
+        product.suggestedCategory &&
+        categories[product.suggestedCategory] &&
+        product.confidence > 40
+      ) {
+        successfullyCategorizedProducts.add(product.id);
+      }
+    });
+
+    // Now build the "Other" taxonomy only from products that are NOT successfully categorized
+    const other = {};
+
+    products.forEach((product) => {
+      // Skip products that are successfully categorized into ACES
+      if (successfullyCategorizedProducts.has(product.id)) {
+        return;
+      }
+
+      // Use original categories for uncategorized products
+      const categoriesToCheck = [];
+
+      if (product.originalCategory) {
+        categoriesToCheck.push({
+          category: product.originalCategory,
+          subcategory: product.originalSubcategory,
+          partType: product.originalPartType,
+        });
+      }
+
+      // If no original category but we have suggested (low confidence), use those
+      if (
+        !product.originalCategory &&
+        product.suggestedCategory &&
+        product.confidence <= 40
+      ) {
+        categoriesToCheck.push({
+          category: product.suggestedCategory,
+          subcategory: product.suggestedSubcategory,
+          partType: product.suggestedPartType,
+        });
+      }
+
+      categoriesToCheck.forEach(({ category, subcategory, partType }) => {
+        if (category) {
+          if (!other[category]) {
+            other[category] = {};
+          }
+
+          if (subcategory) {
+            if (!other[category][subcategory]) {
+              other[category][subcategory] = [];
+            }
+
+            if (partType) {
+              if (!other[category][subcategory].includes(partType)) {
+                other[category][subcategory].push(partType);
+              }
+            }
+          }
+        }
+      });
+    });
+
+    return other;
+  }, [categories, products]);
+
   const taxonomyStats = useMemo(() => {
     const stats = {
       totalCategories: Object.keys(categories).length,
@@ -54,6 +129,8 @@ const TaxonomyManager = ({
       distribution: {},
       performance: {},
       unused: { categories: [], subcategories: [], partTypes: [] },
+      otherCategories: {},
+      otherPerformance: {},
     };
 
     Object.entries(categories).forEach(([category, subcategories]) => {
@@ -152,8 +229,101 @@ const TaxonomyManager = ({
       );
     });
 
+    // Calculate statistics for Other categories using the new filtering logic
+    Object.entries(otherTaxonomy).forEach(([category, subcategories]) => {
+      // Create a map of successfully categorized products (same logic as otherTaxonomy)
+      const successfullyCategorizedProducts = new Set();
+      products.forEach((product) => {
+        if (
+          product.suggestedCategory &&
+          categories[product.suggestedCategory] &&
+          product.confidence > 40
+        ) {
+          successfullyCategorizedProducts.add(product.id);
+        }
+      });
+
+      // Count products in this category that are NOT successfully categorized
+      const categoryProducts = products.filter((product) => {
+        // Skip successfully categorized products
+        if (successfullyCategorizedProducts.has(product.id)) {
+          return false;
+        }
+
+        // Include products with this original category
+        return (
+          product.originalCategory === category ||
+          (product.suggestedCategory === category && product.confidence <= 40)
+        );
+      });
+
+      const totalProducts = categoryProducts.length;
+      const avgConfidence =
+        totalProducts > 0
+          ? categoryProducts.reduce((sum, p) => sum + (p.confidence || 0), 0) /
+            totalProducts
+          : 0;
+
+      stats.otherCategories[category] = {
+        total: totalProducts,
+        subcategories: {},
+      };
+
+      stats.otherPerformance[category] = {
+        productCount: totalProducts,
+        avgConfidence: avgConfidence,
+        subcategoryCount: Object.keys(subcategories).length,
+        utilizationRate: totalProducts > 0 ? 1 : 0,
+      };
+
+      Object.entries(subcategories).forEach(([subcategory, partTypes]) => {
+        // Count products in this subcategory that are NOT successfully categorized
+        const subcategoryProducts = products.filter((product) => {
+          if (successfullyCategorizedProducts.has(product.id)) {
+            return false;
+          }
+
+          return (
+            (product.originalCategory === category &&
+              product.originalSubcategory === subcategory) ||
+            (product.suggestedCategory === category &&
+              product.suggestedSubcategory === subcategory &&
+              product.confidence <= 40)
+          );
+        });
+
+        stats.otherCategories[category].subcategories[subcategory] = {
+          total: subcategoryProducts.length,
+          partTypes: {},
+        };
+
+        partTypes.forEach((partType) => {
+          // Count products in this part type that are NOT successfully categorized
+          const partTypeProducts = products.filter((product) => {
+            if (successfullyCategorizedProducts.has(product.id)) {
+              return false;
+            }
+
+            return (
+              (product.originalCategory === category &&
+                product.originalSubcategory === subcategory &&
+                product.originalPartType === partType) ||
+              (product.suggestedCategory === category &&
+                product.suggestedSubcategory === subcategory &&
+                product.suggestedPartType === partType &&
+                product.confidence <= 40)
+            );
+          });
+
+          stats.otherCategories[category].subcategories[subcategory].partTypes[
+            partType
+          ] = partTypeProducts.length;
+        });
+      });
+    });
+
     return stats;
-  }, [categories, products]);
+  }, [categories, products, otherTaxonomy]);
 
   const filteredTaxonomy = useMemo(() => {
     const filtered = {};
@@ -217,6 +387,12 @@ const TaxonomyManager = ({
       allNodes.add(category);
       Object.keys(filteredTaxonomy[category]).forEach((subcategory) => {
         allNodes.add(`${category}:${subcategory}`);
+      });
+    });
+    Object.keys(otherTaxonomy).forEach((category) => {
+      allNodes.add(`other-${category}`);
+      Object.keys(otherTaxonomy[category]).forEach((subcategory) => {
+        allNodes.add(`other-${category}:${subcategory}`);
       });
     });
     setExpandedNodes(allNodes);
@@ -550,6 +726,7 @@ const TaxonomyManager = ({
           <div className="w-1/2 border-r border-gray-200 overflow-y-auto p-4">
             <TaxonomyTree
               taxonomy={filteredTaxonomy}
+              otherTaxonomy={otherTaxonomy}
               expandedNodes={expandedNodes}
               toggleExpanded={toggleExpanded}
               taxonomyStats={taxonomyStats}
@@ -597,9 +774,9 @@ const TaxonomyManager = ({
   );
 };
 
-// Taxonomy Tree Component
 const TaxonomyTree = ({
   taxonomy,
+  otherTaxonomy,
   expandedNodes,
   toggleExpanded,
   taxonomyStats,
@@ -637,11 +814,55 @@ const TaxonomyTree = ({
           onAddItem={onAddItem}
         />
       ))}
+
+      {/* Other Categories Section */}
+      {Object.keys(otherTaxonomy).filter(
+        (cat) => taxonomyStats.otherCategories[cat]?.total > 0
+      ).length > 0 && (
+        <div className="mt-6 border-t border-gray-200 pt-4">
+          <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
+            <FolderOpen className="h-5 w-5 text-blue-600 mr-2" />
+            Other Categories
+            <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
+              {
+                Object.keys(otherTaxonomy).filter(
+                  (cat) => taxonomyStats.otherCategories[cat]?.total > 0
+                ).length
+              }{" "}
+              categories with products
+            </span>
+          </h3>
+          {Object.entries(otherTaxonomy)
+            .filter(
+              ([category]) => taxonomyStats.otherCategories[category]?.total > 0
+            )
+            .map(([category, subcategories]) => (
+              <OtherCategoryNode
+                key={`other-${category}`}
+                category={category}
+                subcategories={subcategories}
+                expandedNodes={expandedNodes}
+                toggleExpanded={toggleExpanded}
+                stats={taxonomyStats.otherCategories[category]}
+                performance={taxonomyStats.otherPerformance[category]}
+                onNodeSelect={onNodeSelect}
+                selectedNode={selectedNode}
+                editingNode={editingNode}
+                newNodeName={newNodeName}
+                setNewNodeName={setNewNodeName}
+                onStartEdit={onStartEdit}
+                onSaveEdit={onSaveEdit}
+                onCancelEdit={onCancelEdit}
+                onDelete={onDelete}
+                onAddItem={onAddItem}
+              />
+            ))}
+        </div>
+      )}
     </div>
   );
 };
 
-// Category Node Component
 const CategoryNode = ({
   category,
   subcategories,
@@ -673,7 +894,7 @@ const CategoryNode = ({
   };
 
   return (
-    <div>
+    <div className="group">
       <div
         className={`flex items-center p-2 rounded-lg hover:bg-gray-50 ${
           isSelected ? "bg-blue-50 border border-blue-200" : ""
@@ -733,7 +954,7 @@ const CategoryNode = ({
                   {performance.avgConfidence.toFixed(0)}%
                 </span>
               )}
-              <div className="flex space-x-1 opacity-0 group-hover:opacity-100">
+              <div className="flex space-x-1 opacity-0 hover:opacity-100">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -796,7 +1017,160 @@ const CategoryNode = ({
   );
 };
 
-// Subcategory Node Component
+const OtherCategoryNode = ({
+  category,
+  subcategories,
+  expandedNodes,
+  toggleExpanded,
+  stats,
+  performance,
+  onNodeSelect,
+  selectedNode,
+  editingNode,
+  newNodeName,
+  setNewNodeName,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onDelete,
+  onAddItem,
+}) => {
+  const isExpanded = expandedNodes.has(`other-${category}`);
+  const isSelected =
+    selectedNode?.type === "category" && selectedNode?.path === category;
+  const isEditing =
+    editingNode?.type === "category" && editingNode?.path === category;
+
+  const getPerformanceColor = (avgConfidence) => {
+    if (avgConfidence >= 80) return "text-green-600";
+    if (avgConfidence >= 60) return "text-yellow-600";
+    return "text-red-600";
+  };
+
+  return (
+    <div className="group">
+      <div
+        className={`flex items-center p-2 rounded-lg hover:bg-gray-50 ${
+          isSelected ? "bg-blue-50 border border-blue-200" : ""
+        }`}
+      >
+        <button
+          onClick={() => toggleExpanded(`other-${category}`)}
+          className="mr-2 p-1 hover:bg-gray-200 rounded"
+        >
+          {isExpanded ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+        </button>
+
+        <FolderOpen className="h-4 w-4 text-blue-600 mr-2" />
+
+        {isEditing ? (
+          <div className="flex-1 flex items-center space-x-2">
+            <input
+              type="text"
+              value={newNodeName}
+              onChange={(e) => setNewNodeName(e.target.value)}
+              className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+              autoFocus
+            />
+            <button
+              onClick={onSaveEdit}
+              className="p-1 text-green-600 hover:bg-green-100 rounded"
+            >
+              <Save className="h-3 w-3" />
+            </button>
+            <button
+              onClick={onCancelEdit}
+              className="p-1 text-gray-600 hover:bg-gray-100 rounded"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <div
+            className="flex-1 flex items-center justify-between cursor-pointer"
+            onClick={() => onNodeSelect({ type: "category", path: category })}
+          >
+            <span className="font-medium text-gray-900">{category}</span>
+            <div className="flex items-center space-x-3">
+              <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                {stats.total}
+              </span>
+              {performance.avgConfidence > 0 && (
+                <span
+                  className={`text-xs font-medium ${getPerformanceColor(
+                    performance.avgConfidence
+                  )}`}
+                >
+                  {performance.avgConfidence.toFixed(0)}%
+                </span>
+              )}
+              <div className="flex space-x-1 opacity-0 hover:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartEdit("category", category, category);
+                  }}
+                  className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded"
+                >
+                  <Edit3 className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddItem("subcategory", category);
+                  }}
+                  className="p-1 text-gray-400 hover:text-green-600 hover:bg-green-100 rounded"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete("category", category);
+                  }}
+                  className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="ml-6 mt-1 space-y-1">
+          {Object.entries(subcategories).map(([subcategory, partTypes]) => (
+            <OtherSubcategoryNode
+              key={subcategory}
+              category={category}
+              subcategory={subcategory}
+              partTypes={partTypes}
+              expandedNodes={expandedNodes}
+              toggleExpanded={toggleExpanded}
+              stats={stats.subcategories[subcategory]}
+              onNodeSelect={onNodeSelect}
+              selectedNode={selectedNode}
+              editingNode={editingNode}
+              newNodeName={newNodeName}
+              setNewNodeName={setNewNodeName}
+              onStartEdit={onStartEdit}
+              onSaveEdit={onSaveEdit}
+              onCancelEdit={onCancelEdit}
+              onDelete={onDelete}
+              onAddItem={onAddItem}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SubcategoryNode = ({
   category,
   subcategory,
@@ -824,7 +1198,7 @@ const SubcategoryNode = ({
     editingNode?.type === "subcategory" && editingNode?.path === nodePath;
 
   return (
-    <div>
+    <div className="group">
       <div
         className={`flex items-center p-2 rounded-lg hover:bg-gray-50 ${
           isSelected ? "bg-blue-50 border border-blue-200" : ""
@@ -841,7 +1215,7 @@ const SubcategoryNode = ({
           )}
         </button>
 
-        <Folder className="h-3 w-3 text-orange-600 mr-2" />
+        <Folder className="h-3 w-3 text-blue-600 mr-2" />
 
         {isEditing ? (
           <div className="flex-1 flex items-center space-x-2">
@@ -867,7 +1241,7 @@ const SubcategoryNode = ({
           </div>
         ) : (
           <div
-            className="flex-1 flex items-center justify-between cursor-pointer group"
+            className="flex-1 flex items-center justify-between cursor-pointer"
             onClick={() =>
               onNodeSelect({ type: "subcategory", path: nodePath })
             }
@@ -877,7 +1251,7 @@ const SubcategoryNode = ({
               <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
                 {stats.total}
               </span>
-              <div className="flex space-x-1 opacity-0 group-hover:opacity-100">
+              <div className="flex space-x-1 opacity-0 hover:opacity-100">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -937,7 +1311,146 @@ const SubcategoryNode = ({
   );
 };
 
-// Part Type Node Component
+const OtherSubcategoryNode = ({
+  category,
+  subcategory,
+  partTypes,
+  expandedNodes,
+  toggleExpanded,
+  stats,
+  onNodeSelect,
+  selectedNode,
+  editingNode,
+  newNodeName,
+  setNewNodeName,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onDelete,
+  onAddItem,
+}) => {
+  const nodeId = `other-${category}:${subcategory}`;
+  const nodePath = `${category} > ${subcategory}`;
+  const isExpanded = expandedNodes.has(nodeId);
+  const isSelected =
+    selectedNode?.type === "subcategory" && selectedNode?.path === nodePath;
+  const isEditing =
+    editingNode?.type === "subcategory" && editingNode?.path === nodePath;
+
+  return (
+    <div className="group">
+      <div
+        className={`flex items-center p-2 rounded-lg hover:bg-gray-50 ${
+          isSelected ? "bg-blue-50 border border-blue-200" : ""
+        }`}
+      >
+        <button
+          onClick={() => toggleExpanded(nodeId)}
+          className="mr-2 p-1 hover:bg-gray-200 rounded"
+        >
+          {isExpanded ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
+        </button>
+
+        <Folder className="h-3 w-3 text-blue-600 mr-2" />
+
+        {isEditing ? (
+          <div className="flex-1 flex items-center space-x-2">
+            <input
+              type="text"
+              value={newNodeName}
+              onChange={(e) => setNewNodeName(e.target.value)}
+              className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+              autoFocus
+            />
+            <button
+              onClick={onSaveEdit}
+              className="p-1 text-green-600 hover:bg-green-100 rounded"
+            >
+              <Save className="h-3 w-3" />
+            </button>
+            <button
+              onClick={onCancelEdit}
+              className="p-1 text-gray-600 hover:bg-gray-100 rounded"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <div
+            className="flex-1 flex items-center justify-between cursor-pointer"
+            onClick={() =>
+              onNodeSelect({ type: "subcategory", path: nodePath })
+            }
+          >
+            <span className="text-sm text-gray-700">{subcategory}</span>
+            <div className="flex items-center space-x-2">
+              <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                {stats.total}
+              </span>
+              <div className="flex space-x-1 opacity-0 hover:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartEdit("subcategory", nodePath, subcategory);
+                  }}
+                  className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded"
+                >
+                  <Edit3 className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddItem("partType", nodePath);
+                  }}
+                  className="p-1 text-gray-400 hover:text-green-600 hover:bg-green-100 rounded"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete("subcategory", nodePath);
+                  }}
+                  className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="ml-6 mt-1 space-y-1">
+          {partTypes.map((partType) => (
+            <OtherPartTypeNode
+              key={partType}
+              category={category}
+              subcategory={subcategory}
+              partType={partType}
+              count={stats.partTypes[partType] || 0}
+              onNodeSelect={onNodeSelect}
+              selectedNode={selectedNode}
+              editingNode={editingNode}
+              newNodeName={newNodeName}
+              setNewNodeName={setNewNodeName}
+              onStartEdit={onStartEdit}
+              onSaveEdit={onSaveEdit}
+              onCancelEdit={onCancelEdit}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const PartTypeNode = ({
   category,
   subcategory,
@@ -960,74 +1473,166 @@ const PartTypeNode = ({
     editingNode?.type === "partType" && editingNode?.path === nodePath;
 
   return (
-    <div
-      className={`flex items-center p-2 rounded-lg hover:bg-gray-50 ${
-        isSelected ? "bg-blue-50 border border-blue-200" : ""
-      }`}
-    >
-      <div className="w-6 mr-2" />
-      <Tag className="h-3 w-3 text-green-600 mr-2" />
+    <div className="group">
+      <div
+        className={`flex items-center p-2 rounded-lg hover:bg-gray-50 ${
+          isSelected ? "bg-blue-50 border border-blue-200" : ""
+        }`}
+      >
+        <div className="w-6 mr-2" />
+        <Tag className="h-3 w-3 text-green-600 mr-2" />
 
-      {isEditing ? (
-        <div className="flex-1 flex items-center space-x-2">
-          <input
-            type="text"
-            value={newNodeName}
-            onChange={(e) => setNewNodeName(e.target.value)}
-            className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-            autoFocus
-          />
-          <button
-            onClick={onSaveEdit}
-            className="p-1 text-green-600 hover:bg-green-100 rounded"
+        {isEditing ? (
+          <div className="flex-1 flex items-center space-x-2">
+            <input
+              type="text"
+              value={newNodeName}
+              onChange={(e) => setNewNodeName(e.target.value)}
+              className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+              autoFocus
+            />
+            <button
+              onClick={onSaveEdit}
+              className="p-1 text-green-600 hover:bg-green-100 rounded"
+            >
+              <Save className="h-3 w-3" />
+            </button>
+            <button
+              onClick={onCancelEdit}
+              className="p-1 text-gray-600 hover:bg-gray-100 rounded"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <div
+            className="flex-1 flex items-center justify-between cursor-pointer"
+            onClick={() => onNodeSelect({ type: "partType", path: nodePath })}
           >
-            <Save className="h-3 w-3" />
-          </button>
-          <button
-            onClick={onCancelEdit}
-            className="p-1 text-gray-600 hover:bg-gray-100 rounded"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      ) : (
-        <div
-          className="flex-1 flex items-center justify-between cursor-pointer group"
-          onClick={() => onNodeSelect({ type: "partType", path: nodePath })}
-        >
-          <span className="text-sm text-gray-600">{partType}</span>
-          <div className="flex items-center space-x-2">
-            <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
-              {count}
-            </span>
-            <div className="flex space-x-1 opacity-0 group-hover:opacity-100">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onStartEdit("partType", nodePath, partType);
-                }}
-                className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded"
-              >
-                <Edit3 className="h-3 w-3" />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete("partType", nodePath);
-                }}
-                className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded"
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
+            <span className="text-sm text-gray-600">{partType}</span>
+            <div className="flex items-center space-x-2">
+              <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+                {count}
+              </span>
+              <div className="flex space-x-1 opacity-0 hover:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartEdit("partType", nodePath, partType);
+                  }}
+                  className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded"
+                >
+                  <Edit3 className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete("partType", nodePath);
+                  }}
+                  className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
 
-// Product Details Component
+const OtherPartTypeNode = ({
+  category,
+  subcategory,
+  partType,
+  count,
+  onNodeSelect,
+  selectedNode,
+  editingNode,
+  newNodeName,
+  setNewNodeName,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onDelete,
+}) => {
+  const nodePath = `${category} > ${subcategory} > ${partType}`;
+  const isSelected =
+    selectedNode?.type === "partType" && selectedNode?.path === nodePath;
+  const isEditing =
+    editingNode?.type === "partType" && editingNode?.path === nodePath;
+
+  return (
+    <div className="group">
+      <div
+        className={`flex items-center p-2 rounded-lg hover:bg-gray-50 ${
+          isSelected ? "bg-blue-50 border border-blue-200" : ""
+        }`}
+      >
+        <div className="w-6 mr-2" />
+        <Tag className="h-3 w-3 text-green-600 mr-2" />
+
+        {isEditing ? (
+          <div className="flex-1 flex items-center space-x-2">
+            <input
+              type="text"
+              value={newNodeName}
+              onChange={(e) => setNewNodeName(e.target.value)}
+              className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+              autoFocus
+            />
+            <button
+              onClick={onSaveEdit}
+              className="p-1 text-green-600 hover:bg-green-100 rounded"
+            >
+              <Save className="h-3 w-3" />
+            </button>
+            <button
+              onClick={onCancelEdit}
+              className="p-1 text-gray-600 hover:bg-gray-100 rounded"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <div
+            className="flex-1 flex items-center justify-between cursor-pointer"
+            onClick={() => onNodeSelect({ type: "partType", path: nodePath })}
+          >
+            <span className="text-sm text-gray-600">{partType}</span>
+            <div className="flex items-center space-x-2">
+              <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+                {count}
+              </span>
+              <div className="flex space-x-1 opacity-0 hover:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartEdit("partType", nodePath, partType);
+                  }}
+                  className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-100 rounded"
+                >
+                  <Edit3 className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete("partType", nodePath);
+                  }}
+                  className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-100 rounded"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ProductDetails = ({
   selectedNode,
   products,
@@ -1089,7 +1694,6 @@ const ProductDetails = ({
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
       <div className="p-4 border-b border-gray-200 bg-blue-50">
         <div className="flex items-center justify-between">
           <div>
@@ -1117,7 +1721,6 @@ const ProductDetails = ({
           )}
         </div>
 
-        {/* Bulk Edit Controls */}
         {bulkEditMode && selectedProducts.size > 0 && (
           <div className="mt-4 p-3 bg-white rounded border border-orange-200">
             <h4 className="text-sm font-medium text-gray-900 mb-2">
@@ -1188,7 +1791,6 @@ const ProductDetails = ({
         )}
       </div>
 
-      {/* Product List */}
       <div className="flex-1 overflow-y-auto">
         {products.length > 0 ? (
           <div className="p-4 space-y-3">

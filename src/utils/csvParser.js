@@ -125,6 +125,10 @@ const convertToProducts = (rows) => {
 
   const headers = rows[0].map((header) => normalizeHeader(header));
 
+  // Debug: Log headers
+  console.log("CSV Headers:", rows[0]);
+  console.log("Normalized Headers:", headers);
+
   const products = rows
     .slice(1)
     .map((row, index) => {
@@ -146,11 +150,11 @@ const convertToProducts = (rows) => {
 
       return {
         ...product,
-        suggestedCategory: "",
-        suggestedSubcategory: "",
-        suggestedPartType: "",
-        confidence: 0,
-        status: "pending",
+        suggestedCategory: product.originalCategory || "",
+        suggestedSubcategory: product.originalSubcategory || "",
+        suggestedPartType: product.originalPartType || "",
+        confidence: product.originalCategory ? 100 : 0,
+        status: product.originalCategory ? "imported" : "pending",
         matchReasons: [],
       };
     })
@@ -173,6 +177,44 @@ const normalizeHeader = (header) => {
     "part number": "partNumber",
     part_number: "partNumber",
     sku: "partNumber",
+    // Category mappings
+    category: "originalCategory",
+    "product category": "originalCategory",
+    "main category": "originalCategory",
+    "primary category": "originalCategory",
+    "item category": "originalCategory",
+    "parent category": "originalCategory",
+    group: "originalCategory",
+    "product group": "originalCategory",
+    subcategory: "originalSubcategory",
+    "product subcategory": "originalSubcategory",
+    "sub category": "originalSubcategory",
+    "secondary category": "originalSubcategory",
+    "item subcategory": "originalSubcategory",
+    subgroup: "originalSubcategory",
+    "product subgroup": "originalSubcategory",
+    "part type": "originalPartType",
+    parttype: "originalPartType",
+    "product type": "originalPartType",
+    "part type": "originalPartType",
+    type: "originalPartType",
+    "item type": "originalPartType",
+    part: "originalPartType",
+    component: "originalPartType",
+    "component type": "originalPartType",
+    // Numbered category mappings
+    "category 1": "originalCategory",
+    "category 2": "originalSubcategory",
+    "category 3": "originalPartType",
+    category1: "originalCategory",
+    category2: "originalSubcategory",
+    category3: "originalPartType",
+    "cat 1": "originalCategory",
+    "cat 2": "originalSubcategory",
+    "cat 3": "originalPartType",
+    cat1: "originalCategory",
+    cat2: "originalSubcategory",
+    cat3: "originalPartType",
   };
 
   const normalized = header.toLowerCase().trim();
@@ -190,6 +232,9 @@ export const validateCSV = (products) => {
       hasDescription: 0,
       hasBrand: 0,
       hasPartNumber: 0,
+      hasCategory: 0,
+      hasSubcategory: 0,
+      hasPartType: 0,
     },
   };
 
@@ -200,6 +245,9 @@ export const validateCSV = (products) => {
     if (product.description) validation.stats.hasDescription++;
     if (product.brand) validation.stats.hasBrand++;
     if (product.partNumber) validation.stats.hasPartNumber++;
+    if (product.originalCategory) validation.stats.hasCategory++;
+    if (product.originalSubcategory) validation.stats.hasSubcategory++;
+    if (product.originalPartType) validation.stats.hasPartType++;
   });
 
   if (products.length === 0) {
