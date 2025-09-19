@@ -43,6 +43,8 @@ const AcesPiesCategorizationTool = () => {
   const [selectedCategory, setSelectedCategory] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPreparingAI, setIsPreparingAI] = useState(false);
+  const [apiError, setApiError] = useState(null);
   const [validationResults, setValidationResults] = useState(null);
 
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
@@ -112,6 +114,7 @@ const AcesPiesCategorizationTool = () => {
       if (!confirmed) return;
     }
 
+    setIsPreparingAI(true);
     setIsProcessing(true);
     setProcessingProgress({
       current: 0,
@@ -121,7 +124,7 @@ const AcesPiesCategorizationTool = () => {
     });
 
     try {
-      const categorizedProducts = await batchCategorizeWithOpenAI(
+      const aiResponse = await batchCategorizeWithOpenAI(
         products,
         (processedProducts, totalProducts, currentBatch, totalBatches) => {
           setProcessingProgress({
@@ -132,6 +135,16 @@ const AcesPiesCategorizationTool = () => {
           });
         }
       );
+
+      // batchCategorizeWithOpenAI now returns { results, stats } when using AI
+      const categorizedProducts = Array.isArray(aiResponse)
+        ? aiResponse
+        : aiResponse.results || [];
+
+      const stats = aiResponse.stats || null;
+      if (stats) {
+        console.info("AI stats:", stats);
+      }
 
       const updatedProducts = categorizedProducts.map((product) => {
         let status = "low-confidence";
@@ -160,11 +173,20 @@ const AcesPiesCategorizationTool = () => {
 
       setProducts(updatedProducts);
     } catch (error) {
-      alert(
-        "OpenAI categorization failed. Falling back to local categorization."
-      );
-      await handleLocalCategorization();
+      // Surface the specific API error to the user and stop processing
+      console.error("OpenAI error", error);
+      setApiError(error);
+      // Show a clear alert including type/code when available
+      const errMsg = error?.message || String(error);
+      const errCode = error?.code || error?.type || null;
+      alert(`OpenAI Error${errCode ? ` (${errCode})` : ""}: ${errMsg}`);
+      // Do not automatically fall back to local categorization for fatal errors
+      if (!error?.isFatal) {
+        // For transient errors, fall back to local categorization
+        await handleLocalCategorization();
+      }
     } finally {
+      setIsPreparingAI(false);
       setIsProcessing(false);
       setProcessingProgress({
         current: 0,
@@ -412,6 +434,30 @@ const AcesPiesCategorizationTool = () => {
         )}
       </div>
 
+      {apiError && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-start">
+            <div className="flex-1">
+              <div className="font-medium text-red-800">OpenAI API Error</div>
+              <div className="text-sm text-red-700 mt-1">
+                {apiError.message}
+              </div>
+              {apiError.code || apiError.type ? (
+                <div className="text-xs text-red-600 mt-1">
+                  Code: {apiError.code || apiError.type}
+                </div>
+              ) : null}
+            </div>
+            <button
+              onClick={() => setApiError(null)}
+              className="ml-4 text-sm px-2 py-1 bg-red-200 text-red-800 rounded"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       <FileUpload onFileUpload={handleFileUpload} isProcessing={isProcessing} />
 
       {products.length > 0 && (
@@ -475,6 +521,23 @@ const AcesPiesCategorizationTool = () => {
                 {useOpenAI
                   ? "Using OpenAI for enhanced accuracy"
                   : "Using local categorization algorithms"}
+              </div>
+            </div>
+          )}
+
+          {isPreparingAI && processingProgress.currentBatch === 0 && (
+            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-medium text-yellow-900">
+                  Preparing AI...
+                </span>
+                <span className="text-yellow-700">
+                  Initializing and preparing batches
+                </span>
+              </div>
+              <div className="text-xs text-yellow-600">
+                Please wait — this may take a few seconds while the system
+                prepares the request batches.
               </div>
             </div>
           )}

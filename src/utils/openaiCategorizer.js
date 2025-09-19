@@ -1,28 +1,44 @@
 import acesCategories from "../data/acesCategories.js";
+import { suggestCategory } from "./categoryMatcher.js";
 
-const BATCH_SIZE = 50;
-const MAX_RETRIES = 3;
+const BATCH_SIZE = Number(process.env.REACT_APP_BATCH_SIZE) || 200;
+const MAX_RETRIES = 4;
 const RETRY_DELAY_MS = 2000;
 const API_TIMEOUT_MS = 30000;
+const PREFILTER_CONFIDENCE_THRESHOLD =
+  Number(process.env.REACT_APP_PREFILTER_CONFIDENCE) || 95;
+const OPENAI_MODEL = process.env.REACT_APP_OPENAI_MODEL || "gpt-4o-mini";
 
-const getAcesCategoriesPrompt = () => {
+// Compact taxonomy prompt to reduce token size: list main categories and subcategories only
+const getAcesCategoriesPrompt = (compact = true) => {
   const mainCategories = Object.keys(acesCategories);
-  let prompt = "ACES Automotive Categories (use exact names):\n";
-
-  mainCategories.forEach((category) => {
-    prompt += `- ${category}\n`;
-    const subcategories = Object.keys(acesCategories[category]);
-    subcategories.forEach((subcategory) => {
-      // Show all subcategories instead of limiting to 5
-      prompt += `  * ${subcategory}\n`;
-      const partTypes = acesCategories[category][subcategory];
-      if (partTypes.length > 0) {
-        prompt += `    - ${partTypes.join(", ")}\n`;
-      }
+  if (!compact) {
+    // full verbose prompt (rarely used)
+    let prompt = "ACES Automotive Categories (use exact names):\n";
+    mainCategories.forEach((category) => {
+      prompt += `- ${category}\n`;
+      const subcategories = Object.keys(acesCategories[category]);
+      subcategories.forEach((subcategory) => {
+        prompt += `  * ${subcategory}\n`;
+        const partTypes = acesCategories[category][subcategory];
+        if (partTypes.length > 0) {
+          prompt += `    - ${partTypes.join(", ")}\n`;
+        }
+      });
+      prompt += "\n";
     });
+    return prompt;
+  }
+
+  // compact: only categories and subcategories
+  let prompt =
+    "ACES Automotive Categories (main categories and subcategories only):\n";
+  mainCategories.forEach((category) => {
+    prompt += `- ${category}: `;
+    const subcategories = Object.keys(acesCategories[category]);
+    prompt += subcategories.join(", ");
     prompt += "\n";
   });
-
   return prompt;
 };
 
@@ -189,7 +205,6 @@ const validateCategoryWithKeywords = (
     },
   };
 
-  // Check if product contains strong indicators for Tools & Equipment
   if (
     keywordPatterns["Tools & Equipment"].keywords.some((keyword) =>
       productText.includes(keyword)
@@ -212,7 +227,6 @@ const validateCategoryWithKeywords = (
     }
   }
 
-  // Check if product should NOT be Electrical
   if (
     keywordPatterns["Electrical"].avoidKeywords.some((keyword) =>
       productText.includes(keyword)
@@ -245,57 +259,140 @@ export const batchCategorizeWithOpenAI = async (products, progressCallback) => {
     );
   }
 
-  if (!products || products.length === 0) {
-    return [];
-  }
+  if (!products || products.length === 0) return [];
 
-  const totalBatches = Math.ceil(products.length / BATCH_SIZE);
-  const categorizedProducts = [];
-  const batchPromises = [];
+  console.info(`OpenAI categorization start: ${products.length} products`);
 
-  // Create batches and process them concurrently for better performance
-  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    const startIdx = batchIndex * BATCH_SIZE;
-    const endIdx = Math.min(startIdx + BATCH_SIZE, products.length);
-    const batch = products.slice(startIdx, endIdx);
-
-    const batchPromise = processBatchWithRetry(
-      batch,
-      batchIndex,
-      apiKey,
-      progressCallback
+  // 1) Deterministic prefilter - fast local matcher to reduce LLM calls
+  const prefilter = products.map((product) => {
+    const suggestion = suggestCategory(
+      product.name || "",
+      product.description || "",
+      product.brand || "",
+      product.title || "",
+      product.originalCategory || product.category || ""
     );
-    batchPromises.push(batchPromise);
-  }
+    return { product, suggestion };
+  });
 
-  // Process all batches concurrently but limit concurrency to avoid rate limits
-  const concurrencyLimit = 4; // Process 4 batches at a time
-  const results = [];
+  console.info(
+    "Bypassing deterministic prefilter: sending all products to OpenAI for classification"
+  );
 
-  for (let i = 0; i < batchPromises.length; i += concurrencyLimit) {
-    const batchSlice = batchPromises.slice(i, i + concurrencyLimit);
-    const batchResults = await Promise.all(batchSlice);
-    results.push(...batchResults.flat());
+  const trusted = [];
+  const uncertain = prefilter.map((p, idx) => ({
+    index: idx,
+    product: p.product,
+    suggestion: p.suggestion,
+  }));
 
-    // Update overall progress
+  // 2) Build batches only for uncertain products
+  const uncertainProducts = uncertain.map((u) => u.product);
+  const totalBatches = Math.ceil(uncertainProducts.length / BATCH_SIZE);
+
+  // Concurrency groups to avoid bursting API
+  const concurrency = Number(process.env.REACT_APP_CONCURRENCY) || 4;
+  const batchIndexes = Array.from({ length: totalBatches }, (_, i) => i);
+
+  // Result holder initialized with original products
+  const final = products.map((p) => ({ ...p }));
+
+  const stats = {
+    total: products.length,
+    trusted: trusted.length,
+    uncertain: uncertain.length,
+    batches: totalBatches,
+    retries: 0,
+    startMs: Date.now(),
+  };
+
+  // populate trusted results
+  trusted.forEach((t) => {
+    final[t.index].suggestedCategory = t.suggestion.category || "";
+    final[t.index].suggestedSubcategory = t.suggestion.subcategory || "";
+    final[t.index].suggestedPartType = t.suggestion.partType || "";
+    final[t.index].confidence = t.suggestion.confidence || 0;
+    final[t.index].matchReasons = t.suggestion.matchReasons || [];
+  });
+
+  let processedUncertain = 0;
+  let processedBatches = 0;
+
+  for (let i = 0; i < batchIndexes.length; i += concurrency) {
+    const group = batchIndexes.slice(i, i + concurrency);
+    const promises = group.map(async (batchIdx) => {
+      const start = batchIdx * BATCH_SIZE;
+      const end = Math.min(start + BATCH_SIZE, uncertainProducts.length);
+      const batch = uncertainProducts.slice(start, end);
+      const aiResults = await processBatchWithRetry(
+        batch,
+        batchIdx,
+        apiKey,
+        progressCallback
+      );
+      if (aiResults && Array.isArray(aiResults)) stats.retries += 0; // placeholder for extension
+      return { batchIdx, aiResults };
+    });
+
+    const resolved = await Promise.all(promises);
+
+    // Merge group results
+    resolved.forEach(({ batchIdx, aiResults }) => {
+      const start = batchIdx * BATCH_SIZE;
+      aiResults.forEach((aiRes, offset) => {
+        const uncertainIdx = start + offset;
+        const uncertainEntry = uncertain[uncertainIdx];
+        if (!uncertainEntry) return;
+        const originalIndex = uncertainEntry.index;
+
+        final[originalIndex].suggestedCategory =
+          aiRes.suggestedCategory || aiRes.category || "";
+        final[originalIndex].suggestedSubcategory =
+          aiRes.suggestedSubcategory || aiRes.subcategory || "";
+        final[originalIndex].suggestedPartType =
+          aiRes.suggestedPartType || aiRes.partType || "";
+        final[originalIndex].confidence = aiRes.confidence || 0;
+
+        if (!final[originalIndex].suggestedCategory) {
+          const fallback = uncertainEntry.suggestion || {};
+          final[originalIndex].suggestedCategory = fallback.category || "";
+          final[originalIndex].suggestedSubcategory =
+            fallback.subcategory || "";
+          final[originalIndex].suggestedPartType = fallback.partType || "";
+          final[originalIndex].confidence = fallback.confidence || 0;
+          final[originalIndex].matchReasons = fallback.matchReasons || [];
+        }
+
+        processedUncertain++;
+      });
+    });
+
+    // mark how many batches we've completed in this group
+    processedBatches += group.length;
+
     if (progressCallback) {
-      const processedProducts = Math.min(
-        (i + concurrencyLimit) * BATCH_SIZE,
-        products.length
+      const processedProducts = trusted.length + processedUncertain;
+      // Derive a user-friendly current batch number from processed products so
+      // the batch display aligns with the processed product counts.
+      const proportion =
+        products.length > 0 ? processedProducts / products.length : 0;
+      const currentBatchFromProgress = Math.min(
+        Math.max(1, Math.ceil(proportion * totalBatches)),
+        totalBatches
       );
       progressCallback(
         processedProducts,
         products.length,
-        Math.min(i + concurrencyLimit, totalBatches),
+        currentBatchFromProgress,
         totalBatches
       );
     }
   }
-
-  return results;
+  stats.timeMs = Date.now() - stats.startMs;
+  console.info(`OpenAI categorization finished. stats=`, stats);
+  return { results: final, stats };
 };
 
-// Process a single batch with retry logic
 const processBatchWithRetry = async (
   batch,
   batchIndex,
@@ -308,30 +405,45 @@ const processBatchWithRetry = async (
     try {
       const results = await processSingleBatch(batch, apiKey);
 
-      // Validate results match batch size
+      if (!Array.isArray(results)) {
+        throw new Error("Invalid response from processSingleBatch");
+      }
+
       if (results.length !== batch.length) {
-        throw new Error(
-          `Expected ${batch.length} results, got ${results.length}`
+        console.warn(
+          `Batch ${batchIndex}: expected ${batch.length} results, got ${results.length}`
         );
       }
 
       return results;
     } catch (error) {
       lastError = error;
-      console.error(
-        `❌ Batch ${batchIndex + 1} attempt ${attempt} failed:`,
-        error.message
-      );
+      const message = (error && error.message) || String(error);
+      const isRateLimit = /rate limit|429|tokens/.test(message.toLowerCase());
 
-      if (attempt < MAX_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      // If the error is marked fatal by processSingleBatch (e.g. insufficient_quota), rethrow
+      if (error && error.isFatal) {
+        console.error(`Batch ${batchIndex + 1} fatal error: ${message}`);
+        throw error; // bubble up so caller/UI can handle immediately
       }
+
+      const backoffBase = Math.min(1000 * Math.pow(2, attempt), 30000);
+      const jitter = Math.random() * 1000;
+      const delay = isRateLimit ? backoffBase + jitter : RETRY_DELAY_MS;
+
+      console.warn(
+        `Batch ${
+          batchIndex + 1
+        } attempt ${attempt} failed: ${message}. Retrying in ${Math.round(
+          delay
+        )}ms`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
-  // All retries failed, return fallback results
   console.error(
-    `💥 Batch ${
+    `Batch ${
       batchIndex + 1
     } failed after ${MAX_RETRIES} attempts, using fallback`
   );
@@ -347,9 +459,7 @@ const processBatchWithRetry = async (
   }));
 };
 
-// Process a single batch of products
 const processSingleBatch = async (batch, apiKey) => {
-  // Create comprehensive product descriptions
   const productsText = batch
     .map((product, index) => {
       const productText = [
@@ -368,30 +478,12 @@ const processSingleBatch = async (batch, apiKey) => {
     })
     .join("\n\n---\n\n");
 
-  const acesPrompt = getAcesCategoriesPrompt();
+  const acesPrompt = getAcesCategoriesPrompt(true); // compact
 
-  const systemPrompt = `You are an expert product classifier with deep knowledge of the ACES (Automotive Aftermarket Industry Association) standard categorization system.
-
-Your task is to categorize ${batch.length} products using ONLY the ACES categories provided below. You must analyze the COMPLETE product information including name, title, description, brand, and specifications to determine the most appropriate category.
-
+  // Use a short, precise system prompt to reduce token usage and enforce format
+  const systemPrompt = `You are an expert ACES product classifier. Use only the ACES categories listed below. Be concise and return ONLY a JSON array with ${batch.length} objects corresponding to the input products.
 ${acesPrompt}
-
-CRITICAL REQUIREMENTS:
-1. ALWAYS analyze the FULL product description, specifications, and intended use
-2. ONLY use the main categories listed above (exactly as spelled)
-3. Choose the BEST matching category based on product function and application, not just keywords
-4. For industrial tools and abrasives, use "Tools & Equipment > Metal Working Abrasives"
-5. For electrical components, use appropriate Electrical subcategories
-6. If a product doesn't perfectly match any category, choose the closest available option based on function
-7. Provide confidence scores: 90+ for excellent matches, 70-89 for good matches, 50-69 for reasonable matches, below 50 for poor matches
-8. Never invent new categories or modify the provided category names
-
-EXAMPLES:
-- "3M Scotch-Brite Surface Conditioning Disc" → Tools & Equipment > Metal Working Abrasives > Grinding Wheels
-- "NGK Spark Plug" → Electrical > Ignition System > Spark Plugs
-- "Bosch Oxygen Sensor" → Electrical > Sensors > Oxygen Sensors
-
-Return your response as a valid JSON array with exactly ${batch.length} objects.`;
+Return each object with keys: category, subcategory, partType, confidence (0-100). Do not include any explanation or extra text.`;
 
   const userPrompt = `${productsText}
 
@@ -413,118 +505,230 @@ Respond with ONLY a JSON array in this exact format:
 
 Do not include any explanatory text, markdown formatting, or additional content. Only the JSON array.`;
 
-  // Create abort controller for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  // Helper: robustly parse assistant content which may be plain JSON,
+  // fenced code, or a string-escaped JSON blob. Returns null on failure.
+  const tryParseAssistantContent = (content) => {
+    if (!content || typeof content !== "string") return null;
 
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.1,
-        max_tokens: 10000, // Increased for batch responses
-        presence_penalty: 0,
-        frequency_penalty: 0,
-      }),
-      signal: controller.signal,
-    });
+    let s = content.trim();
 
-    clearTimeout(timeoutId);
+    // Remove markdown code fences if present
+    s = s.replace(/```json\s*|\s*```/g, "").trim();
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        `OpenAI API error: ${response.status} - ${
-          errorData.error?.message || "Unknown error"
+    // Strategy 1: direct JSON.parse
+    try {
+      const parsed = JSON.parse(s);
+      return parsed;
+    } catch (e) {
+      // continue to next strategies
+    }
+
+    // Strategy 2: extract first JSON array-like substring (from [ to ])
+    const firstBracket = s.indexOf("[");
+    const lastBracket = s.lastIndexOf("]");
+    if (
+      firstBracket !== -1 &&
+      lastBracket !== -1 &&
+      lastBracket > firstBracket
+    ) {
+      const slice = s.substring(firstBracket, lastBracket + 1);
+      try {
+        const parsed = JSON.parse(slice);
+        return parsed;
+      } catch (e) {
+        // continue
+      }
+    }
+
+    // Strategy 3: unescape common escape sequences (handles stringified JSON)
+    try {
+      const unescaped = s.replace(/\\n/g, "").replace(/\\"/g, '"');
+      const parsed = JSON.parse(unescaped);
+      return parsed;
+    } catch (e) {
+      // continue
+    }
+
+    // Strategy 4: sometimes the model returns a JSON string wrapped in quotes
+    // e.g. "[ { ... } ]". Try to parse as JSON string then parse again.
+    try {
+      const firstParse = JSON.parse(s);
+      if (typeof firstParse === "string") {
+        return JSON.parse(firstParse);
+      }
+    } catch (e) {
+      // give up
+    }
+
+    return null;
+  };
+
+  const maxTokens = Math.min(16000, 800 + Math.ceil(batch.length * 40));
+
+  const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.1,
+      max_tokens: maxTokens,
+      presence_penalty: 0,
+      frequency_penalty: 0,
+    }),
+  });
+
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(
+      () => reject(new Error(`Request timeout after ${API_TIMEOUT_MS}ms`)),
+      API_TIMEOUT_MS
+    )
+  );
+
+  const response = await Promise.race([fetchPromise, timeoutPromise]);
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const message = errorData.error?.message || `HTTP ${response.status}`;
+
+    const err = new Error(`OpenAI API error: ${response.status} - ${message}`);
+    err.status = response.status;
+    err.type = errorData.error?.type || null;
+    err.code = errorData.error?.code || null;
+    err.raw = errorData;
+
+    const fatalTypes = [
+      "insufficient_quota",
+      "invalid_request_error",
+      "invalid_api_key",
+      "authentication_error",
+    ];
+    if (err.type && fatalTypes.includes(err.type)) {
+      err.isFatal = true;
+    }
+
+    if ([400, 401, 402, 403].includes(response.status)) {
+      err.isFatal = true;
+    }
+
+    if (response.status === 429 || /rate limit/i.test(message)) {
+      err.isRetryable = true;
+    }
+
+    throw err;
+  }
+
+  const data = await response.json();
+  const content = data.choices[0]?.message?.content;
+
+  if (!content) {
+    throw new Error("Empty response from OpenAI");
+  }
+
+  const resultsRaw = tryParseAssistantContent(
+    typeof content === "string" ? content.trim() : content
+  );
+
+  if (!resultsRaw || !Array.isArray(resultsRaw)) {
+    console.error("Failed to parse OpenAI response or not an array:", content);
+    // Best-effort fallback: return items with no suggestion but keep product data
+    return batch.map((product) => ({
+      ...product,
+      suggestedCategory: "",
+      suggestedSubcategory: "",
+      suggestedPartType: "",
+      confidence: 0,
+      error: "Invalid or unparsable response from AI",
+    }));
+  }
+
+  // If assistant returned more items than products, try to reduce intelligently.
+  let results = resultsRaw;
+
+  // If we have duplicates, dedupe while preserving order
+  const seen = new Set();
+  const deduped = [];
+  for (const r of results) {
+    try {
+      const key = JSON.stringify(r);
+      if (!seen.has(key)) {
+        deduped.push(r);
+        seen.add(key);
+      }
+    } catch (e) {
+      // On stringify failure just push
+      deduped.push(r);
+    }
+  }
+
+  if (deduped.length >= batch.length) {
+    results = deduped.slice(0, batch.length);
+  } else if (results.length >= batch.length) {
+    // If dedupe made it shorter but raw had enough, fall back to raw slice
+    results = results.slice(0, batch.length);
+  } else if (results.length < batch.length) {
+    // Not enough results: pad with empty entries so mapping keeps indexes
+    const pad = Array.from(
+      { length: batch.length - results.length },
+      () => ({})
+    );
+    results = results.concat(pad);
+  }
+
+  // Validate and correct each result to ensure ACES compliance
+  return results.map((result = {}, index) => {
+    // Normalize fields
+    const suggestedCategory = result.category || result.Category || "";
+    const suggestedSubcategory =
+      result.subcategory || result.Subcategory || result.subCategory || "";
+    const suggestedPartType =
+      result.partType || result.partType || result.part || "";
+    const rawConfidence =
+      Number(result.confidence || result.confidenceScore || 0) || 0;
+
+    const corrected = validateAndCorrectCategory(
+      suggestedCategory,
+      suggestedSubcategory,
+      suggestedPartType
+    );
+
+    // Apply keyword-based validation to catch obvious misclassifications
+    const keywordValidation = validateCategoryWithKeywords(
+      batch[index],
+      corrected.category,
+      corrected.subcategory
+    );
+
+    let finalCategory = corrected.category;
+    let finalSubcategory = corrected.subcategory;
+    let finalPartType = corrected.partType;
+
+    if (keywordValidation.shouldOverride) {
+      console.log(
+        `Overriding AI classification for product ${index + 1}: ${
+          keywordValidation.reason
         }`
       );
+      finalCategory = keywordValidation.overrideCategory;
+      finalSubcategory = keywordValidation.overrideSubcategory;
+      finalPartType =
+        acesCategories[finalCategory]?.[finalSubcategory]?.[0] || "";
     }
 
-    const data = await response.json();
-    const content = data.choices[0]?.message?.content?.trim();
-
-    if (!content) {
-      throw new Error("Empty response from OpenAI");
-    }
-
-    // Clean the response (remove potential markdown formatting)
-    const cleanContent = content.replace(/```json\s*|\s*```/g, "").trim();
-
-    let results;
-    try {
-      results = JSON.parse(cleanContent);
-    } catch (parseError) {
-      console.error("Failed to parse OpenAI response:", cleanContent);
-      throw new Error(`Invalid JSON response: ${parseError.message}`);
-    }
-
-    if (!Array.isArray(results)) {
-      throw new Error("Response is not an array");
-    }
-
-    if (results.length !== batch.length) {
-      throw new Error(
-        `Expected ${batch.length} results, got ${results.length}`
-      );
-    }
-
-    // Validate and correct each result to ensure ACES compliance
-    return results.map((result, index) => {
-      const corrected = validateAndCorrectCategory(
-        result.category,
-        result.subcategory,
-        result.partType
-      );
-
-      // Apply keyword-based validation to catch obvious misclassifications
-      const keywordValidation = validateCategoryWithKeywords(
-        batch[index],
-        corrected.category,
-        corrected.subcategory
-      );
-
-      let finalCategory = corrected.category;
-      let finalSubcategory = corrected.subcategory;
-      let finalPartType = corrected.partType;
-
-      if (keywordValidation.shouldOverride) {
-        console.log(
-          `Overriding AI classification for product ${index + 1}: ${
-            keywordValidation.reason
-          }`
-        );
-        finalCategory = keywordValidation.overrideCategory;
-        finalSubcategory = keywordValidation.overrideSubcategory;
-        finalPartType =
-          acesCategories[finalCategory]?.[finalSubcategory]?.[0] || "";
-      }
-
-      return {
-        ...batch[index],
-        suggestedCategory: finalCategory,
-        suggestedSubcategory: finalSubcategory,
-        suggestedPartType: finalPartType,
-        confidence: Math.min(100, Math.max(0, result.confidence || 0)),
-      };
-    });
-  } catch (error) {
-    clearTimeout(timeoutId);
-
-    if (error.name === "AbortError") {
-      throw new Error(`Request timeout after ${API_TIMEOUT_MS}ms`);
-    }
-
-    throw error;
-  }
+    return {
+      ...batch[index],
+      suggestedCategory: finalCategory,
+      suggestedSubcategory: finalSubcategory,
+      suggestedPartType: finalPartType,
+      confidence: Math.min(100, Math.max(0, Math.round(rawConfidence) || 0)),
+    };
+  });
 };
 
 // Updated cost estimation for batch processing
