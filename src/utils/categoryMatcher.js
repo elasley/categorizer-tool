@@ -2,13 +2,146 @@
 
 import { acesCategories } from "../data/acesCategories";
 
-// Simple brand rules (you can expand this later)
+// Enhanced brand rules with comprehensive automotive brands
 const simpleBrandRules = {
+  // Brake specialists
+  bendix: {
+    "brake pad|brake pads|pad": {
+      category: "Brake System",
+      subcategory: "Brake Components",
+      partType: "Brake Pads",
+      confidence: 95,
+    },
+    "brake rotor|rotor|disc": {
+      category: "Brake System",
+      subcategory: "Brake Components",
+      partType: "Brake Rotors",
+      confidence: 95,
+    },
+    "brake caliper|caliper": {
+      category: "Brake System",
+      subcategory: "Brake Components",
+      partType: "Brake Calipers",
+      confidence: 95,
+    },
+  },
+  raybestos: {
+    "brake pad|brake pads|pad": {
+      category: "Brake System",
+      subcategory: "Brake Components",
+      partType: "Brake Pads",
+      confidence: 95,
+    },
+  },
+  wagner: {
+    "brake pad|brake pads|pad": {
+      category: "Brake System",
+      subcategory: "Brake Components",
+      partType: "Brake Pads",
+      confidence: 95,
+    },
+  },
+
+  // Engine specialists
+  gates: {
+    "timing belt|belt": {
+      category: "Engine",
+      subcategory: "Timing Components",
+      partType: "Timing Belts",
+      confidence: 95,
+    },
+    "water pump|pump": {
+      category: "Engine",
+      subcategory: "Cooling System",
+      partType: "Water Pumps",
+      confidence: 90,
+    },
+    "hose|radiator hose": {
+      category: "Engine",
+      subcategory: "Cooling System",
+      partType: "Radiator Hoses",
+      confidence: 90,
+    },
+  },
+  dayco: {
+    "timing belt|belt": {
+      category: "Engine",
+      subcategory: "Timing Components",
+      partType: "Timing Belts",
+      confidence: 95,
+    },
+    "serpentine belt": {
+      category: "Engine",
+      subcategory: "Belts & Tensioners",
+      partType: "Serpentine Belts",
+      confidence: 95,
+    },
+  },
+  continental: {
+    "timing belt|belt": {
+      category: "Engine",
+      subcategory: "Timing Components",
+      partType: "Timing Belts",
+      confidence: 95,
+    },
+  },
+
+  // Filtration specialists
+  fram: {
+    "oil filter|filter": {
+      category: "Engine",
+      subcategory: "Oil System",
+      partType: "Oil Filters",
+      confidence: 95,
+    },
+    "air filter": {
+      category: "Engine",
+      subcategory: "Air Intake System",
+      partType: "Air Filters",
+      confidence: 95,
+    },
+    "cabin filter": {
+      category: "A/C & Heating",
+      subcategory: "Blower System",
+      partType: "Cabin Air Filters",
+      confidence: 95,
+    },
+  },
+  wix: {
+    "oil filter|filter": {
+      category: "Engine",
+      subcategory: "Oil System",
+      partType: "Oil Filters",
+      confidence: 95,
+    },
+    "air filter": {
+      category: "Engine",
+      subcategory: "Air Intake System",
+      partType: "Air Filters",
+      confidence: 95,
+    },
+  },
+  mann: {
+    "oil filter|filter": {
+      category: "Engine",
+      subcategory: "Oil System",
+      partType: "Oil Filters",
+      confidence: 95,
+    },
+  },
+
+  // Chemical/Fluid specialists
   "3m": {
-    "sandpaper|sanding disc|body work": {
+    "sandpaper|sanding disc|body work|abrasive": {
       category: "Fluids & Chemicals",
       subcategory: "Body & Paint Supplies",
       partType: "Sandpaper",
+      confidence: 95,
+    },
+    "adhesive|sealant": {
+      category: "Fluids & Chemicals",
+      subcategory: "Adhesives & Sealants",
+      partType: "RTV Silicone",
       confidence: 90,
     },
   },
@@ -17,23 +150,155 @@ const simpleBrandRules = {
       category: "Fluids & Chemicals",
       subcategory: "Adhesives & Sealants",
       partType: "Thread Sealants",
+      confidence: 95,
+    },
+    "gasket maker": {
+      category: "Fluids & Chemicals",
+      subcategory: "Adhesives & Sealants",
+      partType: "Gasket Makers",
+      confidence: 95,
+    },
+  },
+  mobil: {
+    "motor oil|oil": {
+      category: "Fluids & Chemicals",
+      subcategory: "Lubricants",
+      partType: "Motor Oil",
+      confidence: 95,
+    },
+  },
+  castrol: {
+    "motor oil|oil": {
+      category: "Fluids & Chemicals",
+      subcategory: "Lubricants",
+      partType: "Motor Oil",
+      confidence: 95,
+    },
+  },
+  valvoline: {
+    "motor oil|oil": {
+      category: "Fluids & Chemicals",
+      subcategory: "Lubricants",
+      partType: "Motor Oil",
+      confidence: 95,
+    },
+  },
+
+  // Electrical specialists
+  ngk: {
+    "spark plug|plug": {
+      category: "Electrical",
+      subcategory: "Ignition System",
+      partType: "Spark Plugs",
+      confidence: 95,
+    },
+  },
+  denso: {
+    "spark plug|plug": {
+      category: "Electrical",
+      subcategory: "Ignition System",
+      partType: "Spark Plugs",
+      confidence: 95,
+    },
+    alternator: {
+      category: "Electrical",
+      subcategory: "Charging System",
+      partType: "Alternators",
+      confidence: 95,
+    },
+    starter: {
+      category: "Electrical",
+      subcategory: "Charging System",
+      partType: "Starters",
+      confidence: 95,
+    },
+  },
+  bosch: {
+    "spark plug|plug": {
+      category: "Electrical",
+      subcategory: "Ignition System",
+      partType: "Spark Plugs",
+      confidence: 95,
+    },
+    alternator: {
+      category: "Electrical",
+      subcategory: "Charging System",
+      partType: "Alternators",
+      confidence: 95,
+    },
+    "fuel injector|injector": {
+      category: "Fuel System",
+      subcategory: "Fuel Delivery",
+      partType: "Fuel Injectors",
+      confidence: 95,
+    },
+  },
+
+  // AC specialists
+  "four seasons": {
+    "compressor|a/c compressor": {
+      category: "A/C & Heating",
+      subcategory: "A/C Components",
+      partType: "A/C Compressors",
+      confidence: 95,
+    },
+    condenser: {
+      category: "A/C & Heating",
+      subcategory: "A/C Components",
+      partType: "Condensors",
+      confidence: 95,
+    },
+  },
+  santech: {
+    "a/c|air conditioning": {
+      category: "A/C & Heating",
+      subcategory: "A/C Components",
+      partType: "A/C Compressors",
       confidence: 90,
     },
   },
-  gates: {
-    "timing belt|belt": {
-      category: "Engine",
-      subcategory: "Timing Components",
-      partType: "Timing Belts",
-      confidence: 85,
+
+  // Suspension specialists
+  monroe: {
+    "shock|strut|shock absorber": {
+      category: "Steering & Suspension",
+      subcategory: "Suspension Components",
+      partType: "Shock Absorbers",
+      confidence: 95,
     },
   },
-  bendix: {
-    "brake pad|brake pads": {
-      category: "Brake System",
-      subcategory: "Brake Components",
-      partType: "Brake Pads",
-      confidence: 90,
+  kyb: {
+    "shock|strut|shock absorber": {
+      category: "Steering & Suspension",
+      subcategory: "Suspension Components",
+      partType: "Shock Absorbers",
+      confidence: 95,
+    },
+  },
+  gabriel: {
+    "shock|strut|shock absorber": {
+      category: "Steering & Suspension",
+      subcategory: "Suspension Components",
+      partType: "Shock Absorbers",
+      confidence: 95,
+    },
+  },
+
+  // Fuel system specialists
+  carter: {
+    "fuel pump|pump": {
+      category: "Fuel System",
+      subcategory: "Fuel Delivery",
+      partType: "Fuel Pumps",
+      confidence: 95,
+    },
+  },
+  airtex: {
+    "fuel pump|pump": {
+      category: "Fuel System",
+      subcategory: "Fuel Delivery",
+      partType: "Fuel Pumps",
+      confidence: 95,
     },
   },
 };
@@ -219,26 +484,54 @@ const categoryMappings = {
     matchType: "direct",
   },
 
-  // Partial/fuzzy mappings based on keywords
+  // Enhanced partial/fuzzy mappings based on keywords
+  "motor oil": {
+    category: "Fluids & Chemicals",
+    subcategory: "Lubricants",
+    partType: "Motor Oil",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "gear oil": {
+    category: "Fluids & Chemicals",
+    subcategory: "Lubricants",
+    partType: "Gear Oil",
+    confidence: 95,
+    matchType: "partial",
+  },
   oil: {
     category: "Fluids & Chemicals",
     subcategory: "Lubricants",
     partType: "Motor Oil",
-    confidence: 85,
+    confidence: 80,
     matchType: "partial",
   },
   fluid: {
     category: "Fluids & Chemicals",
     subcategory: "Lubricants",
     partType: "Motor Oil",
-    confidence: 80,
+    confidence: 75,
+    matchType: "partial",
+  },
+  "brake cleaner": {
+    category: "Fluids & Chemicals",
+    subcategory: "Cleaners & Degreasers",
+    partType: "Brake Cleaners",
+    confidence: 95,
+    matchType: "partial",
+  },
+  degreaser: {
+    category: "Fluids & Chemicals",
+    subcategory: "Cleaners & Degreasers",
+    partType: "Degreasers",
+    confidence: 90,
     matchType: "partial",
   },
   chemical: {
     category: "Fluids & Chemicals",
     subcategory: "Cleaners & Degreasers",
     partType: "All-Purpose Cleaners",
-    confidence: 80,
+    confidence: 70,
     matchType: "partial",
   },
   tool: {
@@ -255,11 +548,39 @@ const categoryMappings = {
     confidence: 70,
     matchType: "partial",
   },
+  "brake pad": {
+    category: "Brake System",
+    subcategory: "Brake Components",
+    partType: "Brake Pads",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "brake rotor": {
+    category: "Brake System",
+    subcategory: "Brake Components",
+    partType: "Brake Rotors",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "brake caliper": {
+    category: "Brake System",
+    subcategory: "Brake Components",
+    partType: "Brake Calipers",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "brake drum": {
+    category: "Brake System",
+    subcategory: "Brake Components",
+    partType: "Brake Drums",
+    confidence: 95,
+    matchType: "partial",
+  },
   brake: {
     category: "Brake System",
     subcategory: "Brake Components",
     partType: "Brake Pads",
-    confidence: 85,
+    confidence: 80,
     matchType: "partial",
   },
   battery: {
@@ -318,11 +639,67 @@ const categoryMappings = {
     confidence: 80,
     matchType: "partial",
   },
+  "oil filter": {
+    category: "Engine",
+    subcategory: "Oil System",
+    partType: "Oil Filters",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "air filter": {
+    category: "Engine",
+    subcategory: "Air Intake System",
+    partType: "Air Filters",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "fuel filter": {
+    category: "Fuel System",
+    subcategory: "Fuel Delivery",
+    partType: "Fuel Filters",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "cabin filter": {
+    category: "A/C & Heating",
+    subcategory: "Blower System",
+    partType: "Cabin Air Filters",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "timing belt": {
+    category: "Engine",
+    subcategory: "Timing Components",
+    partType: "Timing Belts",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "serpentine belt": {
+    category: "Engine",
+    subcategory: "Belts & Tensioners",
+    partType: "Serpentine Belts",
+    confidence: 95,
+    matchType: "partial",
+  },
+  "water pump": {
+    category: "Engine",
+    subcategory: "Cooling System",
+    partType: "Water Pumps",
+    confidence: 95,
+    matchType: "partial",
+  },
+  radiator: {
+    category: "Engine",
+    subcategory: "Cooling System",
+    partType: "Radiators",
+    confidence: 90,
+    matchType: "partial",
+  },
   filter: {
     category: "Engine",
     subcategory: "Oil System",
     partType: "Oil Filters",
-    confidence: 75,
+    confidence: 70,
     matchType: "partial",
   },
   hydraulic: {
@@ -480,7 +857,7 @@ export const getCategoryMappingStats = (products) => {
 };
 
 /**
- * Main categorization function with existing category mapping support
+ * Enhanced main categorization function with better prioritization
  */
 export const suggestCategory = (
   productName,
@@ -489,19 +866,25 @@ export const suggestCategory = (
   title = "",
   existingCategory = ""
 ) => {
-  const text = `${productName} ${title} ${description} ${brand}`
-    .toLowerCase()
-    .trim();
+  // Clean and normalize input text
+  const cleanText = (str) =>
+    str
+      ? str
+          .toLowerCase()
+          .trim()
+          .replace(/[^\w\s]/g, " ")
+          .replace(/\s+/g, " ")
+      : "";
 
-  // PRIORITY 1: If existing category is provided, try to map it to ACES
-  if (existingCategory) {
-    const categoryMapping = mapExistingCategory(existingCategory);
-    if (categoryMapping && categoryMapping.confidence > 80) {
-      return categoryMapping;
-    }
-  }
+  const cleanProductName = cleanText(productName);
+  const cleanDescription = cleanText(description);
+  const cleanTitle = cleanText(title);
+  const cleanBrand = cleanText(brand);
 
-  if (!text) {
+  const combinedText =
+    `${cleanProductName} ${cleanTitle} ${cleanDescription} ${cleanBrand}`.trim();
+
+  if (!combinedText) {
     return {
       category: "",
       subcategory: "",
@@ -511,37 +894,99 @@ export const suggestCategory = (
     };
   }
 
-  // PRIORITY 2: Try brand-specific rules
-  const brandMatch = checkBrandRules(text, brand);
-  if (brandMatch && brandMatch.confidence > 75) {
-    return brandMatch;
+  let results = [];
+
+  // PRIORITY 1: Brand-specific rules (highest confidence when matched)
+  const brandMatch = checkBrandRules(combinedText, cleanBrand);
+  if (brandMatch) {
+    results.push({
+      ...brandMatch,
+      source: "brand",
+      weight: brandMatch.confidence * 1.2, // Brand matches get bonus weight
+    });
   }
 
-  // PRIORITY 3: Try category mapping with lower confidence if available
-  if (existingCategory) {
-    const categoryMapping = mapExistingCategory(existingCategory);
-    if (categoryMapping) {
-      return categoryMapping;
+  // PRIORITY 2: Detailed keyword analysis of product name and title (most important fields)
+  const primaryText = `${cleanProductName} ${cleanTitle}`.trim();
+  if (primaryText) {
+    const primaryMatch = findKeywordMatches(
+      primaryText,
+      cleanProductName,
+      cleanTitle
+    );
+    if (primaryMatch && primaryMatch.confidence > 30) {
+      results.push({
+        ...primaryMatch,
+        source: "primary_keywords",
+        weight: primaryMatch.confidence * 1.1, // Primary text gets bonus
+      });
     }
   }
 
-  // PRIORITY 4: Try keyword matching as fallback
-  const keywordMatch = findKeywordMatches(text);
-  if (keywordMatch && keywordMatch.confidence > 40) {
-    return keywordMatch;
+  // PRIORITY 3: Full text keyword analysis
+  const fullTextMatch = findKeywordMatches(
+    combinedText,
+    cleanProductName,
+    cleanDescription
+  );
+  if (fullTextMatch && fullTextMatch.confidence > 25) {
+    results.push({
+      ...fullTextMatch,
+      source: "full_keywords",
+      weight: fullTextMatch.confidence,
+    });
   }
 
-  // PRIORITY 5: Return brand match even if lower confidence
-  if (brandMatch) {
-    return brandMatch;
+  // PRIORITY 4: Existing category mapping (as fallback)
+  if (existingCategory) {
+    const categoryMapping = mapExistingCategory(existingCategory);
+    if (categoryMapping) {
+      results.push({
+        ...categoryMapping,
+        source: "category_mapping",
+        weight: categoryMapping.confidence * 0.8, // Lower weight for generic mappings
+      });
+    }
+  }
+
+  // Select the best result
+  if (results.length === 0) {
+    return {
+      category: "",
+      subcategory: "",
+      partType: "",
+      confidence: 0,
+      matchReasons: ["No matching patterns found"],
+    };
+  }
+
+  // Sort by weighted confidence and pick the best
+  results.sort((a, b) => b.weight - a.weight);
+  const bestResult = results[0];
+
+  // Apply final confidence adjustments
+  let finalConfidence = Math.min(95, bestResult.confidence);
+
+  // Boost confidence if multiple sources agree
+  if (results.length > 1) {
+    const topResults = results.slice(0, 2);
+    if (topResults[0].category === topResults[1].category) {
+      finalConfidence = Math.min(98, finalConfidence + 10);
+      bestResult.matchReasons.push("Multiple sources confirm category");
+    }
   }
 
   return {
-    category: "",
-    subcategory: "",
-    partType: "",
-    confidence: 0,
-    matchReasons: ["No matching patterns found"],
+    category: bestResult.category,
+    subcategory: bestResult.subcategory,
+    partType: bestResult.partType,
+    confidence: finalConfidence,
+    matchReasons: [
+      ...bestResult.matchReasons,
+      `Best match from ${bestResult.source} (weight: ${Math.round(
+        bestResult.weight
+      )})`,
+    ],
   };
 };
 
@@ -582,67 +1027,297 @@ const checkBrandRules = (text, brand) => {
 };
 
 /**
- * Find keyword matches
+ * Enhanced keyword matching with better context analysis
  */
-const findKeywordMatches = (text) => {
+const findKeywordMatches = (text, productName = "", description = "") => {
   const words = text.split(/\s+/).filter((w) => w.length > 2);
   let bestMatch = null;
   let bestScore = 0;
+  let allMatches = [];
 
   Object.entries(acesCategories).forEach(([category, subcategories]) => {
     Object.entries(subcategories).forEach(([subcategory, partTypes]) => {
       partTypes.forEach((partType) => {
-        const score = calculateScore(partType, words, text);
+        const score = calculateScore(
+          partType,
+          words,
+          text,
+          productName,
+          description
+        );
 
-        if (score > bestScore && score > 20) {
+        if (score > 25) {
+          // Lower threshold to capture more potential matches
+          allMatches.push({
+            category,
+            subcategory,
+            partType,
+            score,
+            confidence: Math.min(90, score),
+          });
+        }
+
+        if (score > bestScore) {
           bestScore = score;
           bestMatch = {
             category,
             subcategory,
             partType,
-            confidence: Math.min(85, score),
-            matchReasons: [`Keyword match: "${partType}"`],
+            confidence: Math.min(90, score),
+            matchReasons: [`Keyword match: "${partType}" (score: ${score})`],
           };
         }
       });
     });
   });
 
+  // If we have a good match, validate it makes sense contextually
+  if (bestMatch && bestScore > 40) {
+    // Additional context validation
+    const contextValidation = validateMatchContext(
+      bestMatch,
+      text,
+      productName,
+      description
+    );
+    if (contextValidation.isValid) {
+      bestMatch.confidence = Math.min(
+        90,
+        bestMatch.confidence + contextValidation.bonusPoints
+      );
+      bestMatch.matchReasons.push(...contextValidation.reasons);
+    } else {
+      bestMatch.confidence = Math.max(
+        30,
+        bestMatch.confidence - contextValidation.penaltyPoints
+      );
+      bestMatch.matchReasons.push(...contextValidation.reasons);
+    }
+  }
+
   return bestMatch;
 };
 
 /**
- * Calculate simple scoring
+ * Validate that the matched category makes sense in context
  */
-const calculateScore = (partType, words, fullText) => {
-  const partWords = partType.toLowerCase().split(/\s+/);
-  let score = 0;
+const validateMatchContext = (
+  match,
+  text,
+  productName = "",
+  description = ""
+) => {
+  const allText = `${text} ${productName} ${description}`.toLowerCase();
+  let bonusPoints = 0;
+  let penaltyPoints = 0;
+  let reasons = [];
 
-  // Exact phrase match (highest score)
-  if (fullText.includes(partType.toLowerCase())) {
-    return 80;
+  // Context validation rules
+  const validationRules = {
+    "Brake System": {
+      supportiveTerms: [
+        "brake",
+        "stop",
+        "rotor",
+        "pad",
+        "caliper",
+        "disc",
+        "drum",
+      ],
+      conflictingTerms: ["engine", "transmission", "electrical", "spark"],
+      bonus: 10,
+      penalty: 20,
+    },
+    Engine: {
+      supportiveTerms: [
+        "engine",
+        "motor",
+        "timing",
+        "cooling",
+        "oil",
+        "belt",
+        "pump",
+      ],
+      conflictingTerms: ["brake", "suspension", "trailer"],
+      bonus: 10,
+      penalty: 15,
+    },
+    Electrical: {
+      supportiveTerms: [
+        "electrical",
+        "battery",
+        "alternator",
+        "starter",
+        "ignition",
+        "spark",
+        "wire",
+      ],
+      conflictingTerms: ["brake", "hydraulic", "mechanical"],
+      bonus: 10,
+      penalty: 15,
+    },
+    "A/C & Heating": {
+      supportiveTerms: [
+        "air conditioning",
+        "ac",
+        "hvac",
+        "heater",
+        "blower",
+        "compressor",
+        "condenser",
+      ],
+      conflictingTerms: ["brake", "engine oil", "transmission"],
+      bonus: 15,
+      penalty: 20,
+    },
+    "Tools & Equipment": {
+      supportiveTerms: [
+        "tool",
+        "wrench",
+        "socket",
+        "drill",
+        "grinder",
+        "cutting",
+        "abrasive",
+      ],
+      conflictingTerms: ["brake pad", "engine part", "filter"],
+      bonus: 10,
+      penalty: 25,
+    },
+    "Fluids & Chemicals": {
+      supportiveTerms: [
+        "oil",
+        "fluid",
+        "lubricant",
+        "chemical",
+        "cleaner",
+        "sealant",
+        "adhesive",
+      ],
+      conflictingTerms: ["metal", "plastic part", "component"],
+      bonus: 10,
+      penalty: 15,
+    },
+  };
+
+  const categoryRule = validationRules[match.category];
+  if (categoryRule) {
+    // Check for supportive terms
+    const supportiveFound = categoryRule.supportiveTerms.some((term) =>
+      allText.includes(term)
+    );
+    if (supportiveFound) {
+      bonusPoints = categoryRule.bonus;
+      reasons.push("Context supports category assignment");
+    }
+
+    // Check for conflicting terms
+    const conflictingFound = categoryRule.conflictingTerms.some((term) =>
+      allText.includes(term)
+    );
+    if (conflictingFound) {
+      penaltyPoints = categoryRule.penalty;
+      reasons.push("Context conflicts with category assignment");
+    }
   }
 
-  // Word matching
+  return {
+    isValid: bonusPoints > penaltyPoints,
+    bonusPoints,
+    penaltyPoints,
+    reasons,
+  };
+};
+
+/**
+ * Enhanced scoring algorithm with better context awareness
+ */
+const calculateScore = (
+  partType,
+  words,
+  fullText,
+  productName = "",
+  description = ""
+) => {
+  const partWords = partType.toLowerCase().split(/\s+/);
+  const allText = `${fullText} ${productName} ${description}`.toLowerCase();
+  let score = 0;
+
+  // Exact phrase match in any text (highest score)
+  if (allText.includes(partType.toLowerCase())) {
+    return 90;
+  }
+
+  // Check for partial phrase matches
+  const partTypeWords = partType.toLowerCase().split(/\s+/);
+  if (partTypeWords.length > 1) {
+    const consecutiveWords = [];
+    for (let i = 0; i < partTypeWords.length - 1; i++) {
+      const phrase = partTypeWords.slice(i, i + 2).join(" ");
+      if (allText.includes(phrase)) {
+        score += 35; // High score for consecutive word matches
+        consecutiveWords.push(phrase);
+      }
+    }
+  }
+
+  // Word matching with better specificity scoring
+  let matchedWords = 0;
   partWords.forEach((partWord) => {
-    if (words.includes(partWord)) {
-      if (partWord.length > 6) {
+    if (partWord.length <= 2) return; // Skip very short words
+
+    if (words.includes(partWord) || allText.includes(partWord)) {
+      matchedWords++;
+      if (partWord.length > 8) {
+        score += 25; // Very long words are highly specific
+      } else if (partWord.length > 6) {
         score += 20; // Long words are more specific
       } else if (partWord.length > 4) {
         score += 15;
       } else {
         score += 10;
       }
+
+      // Bonus for automotive-specific terms
+      const specificTerms = [
+        "brake",
+        "engine",
+        "transmission",
+        "clutch",
+        "alternator",
+        "compressor",
+        "radiator",
+        "filter",
+        "sensor",
+        "pump",
+        "valve",
+      ];
+      if (specificTerms.includes(partWord)) {
+        score += 10;
+      }
     }
   });
 
-  // Bonus for multiple word matches
-  const matchedWords = partWords.filter((word) => words.includes(word));
-  if (matchedWords.length > 1) {
-    score += matchedWords.length * 5;
+  // Strong bonus for multiple word matches
+  if (matchedWords > 1) {
+    score += matchedWords * 8;
   }
 
-  return score;
+  // Complete word coverage bonus
+  if (matchedWords === partWords.length && partWords.length > 1) {
+    score += 20;
+  }
+
+  // Penalty for very generic matches
+  const genericTerms = ["part", "component", "system", "kit", "set"];
+  if (
+    partWords.some((word) => genericTerms.includes(word)) &&
+    matchedWords === 1
+  ) {
+    score -= 15;
+  }
+
+  return Math.max(0, score);
 };
 
 /**

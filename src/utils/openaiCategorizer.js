@@ -9,85 +9,105 @@ const PREFILTER_CONFIDENCE_THRESHOLD =
   Number(process.env.REACT_APP_PREFILTER_CONFIDENCE) || 95;
 const OPENAI_MODEL = process.env.REACT_APP_OPENAI_MODEL || "gpt-4o-mini";
 
-// Compact taxonomy prompt to reduce token size: list main categories and subcategories only
-const getAcesCategoriesPrompt = (compact = true) => {
+// Enhanced ACES categories prompt that includes part types for accurate AI categorization
+const getAcesCategoriesPrompt = (includePartTypes = true) => {
   const mainCategories = Object.keys(acesCategories);
-  if (!compact) {
-    // full verbose prompt (rarely used)
-    let prompt = "ACES Automotive Categories (use exact names):\n";
+
+  if (!includePartTypes) {
+    // Compact version without part types
+    let prompt = "ACES Categories:\n";
     mainCategories.forEach((category) => {
-      prompt += `- ${category}\n`;
+      prompt += `${category}: `;
       const subcategories = Object.keys(acesCategories[category]);
-      subcategories.forEach((subcategory) => {
-        prompt += `  * ${subcategory}\n`;
-        const partTypes = acesCategories[category][subcategory];
-        if (partTypes.length > 0) {
-          prompt += `    - ${partTypes.join(", ")}\n`;
-        }
-      });
+      prompt += subcategories.join(", ");
       prompt += "\n";
     });
     return prompt;
   }
 
-  // compact: only categories and subcategories
+  // Full version with part types - essential for AI to know what part types exist
   let prompt =
-    "ACES Automotive Categories (main categories and subcategories only):\n";
+    "ACES Automotive Categories with Part Types (use exact names):\n\n";
   mainCategories.forEach((category) => {
-    prompt += `- ${category}: `;
+    prompt += `${category}:\n`;
     const subcategories = Object.keys(acesCategories[category]);
-    prompt += subcategories.join(", ");
+    subcategories.forEach((subcategory) => {
+      const partTypes = acesCategories[category][subcategory];
+      if (partTypes && partTypes.length > 0) {
+        prompt += `  • ${subcategory}: ${partTypes.join(", ")}\n`;
+      }
+    });
     prompt += "\n";
   });
   return prompt;
 };
 
-// Helper function to validate and correct ACES categories
+// Enhanced validation to ensure proper ACES category mapping
 const validateAndCorrectCategory = (
   suggestedCategory,
   suggestedSubcategory = null,
   suggestedPartType = null
 ) => {
-  if (!suggestedCategory)
+  if (!suggestedCategory) {
     return { category: "", subcategory: "", partType: "" };
+  }
 
   const mainCategories = Object.keys(acesCategories);
 
-  // Find closest matching main category
-  let bestMatch = "";
-  let bestScore = 0;
+  // Step 1: Validate and correct main category
+  let finalCategory = "";
 
-  for (const category of mainCategories) {
-    const score = getSimilarityScore(
-      suggestedCategory.toLowerCase(),
-      category.toLowerCase()
-    );
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = category;
+  // Try exact match first
+  if (acesCategories[suggestedCategory]) {
+    finalCategory = suggestedCategory;
+  } else {
+    // Find closest matching main category
+    let bestMatch = "";
+    let bestScore = 0;
+
+    for (const category of mainCategories) {
+      const score = getSimilarityScore(
+        suggestedCategory.toLowerCase(),
+        category.toLowerCase()
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = category;
+      }
     }
+    finalCategory = bestMatch || mainCategories[0];
   }
 
-  const finalCategory = bestMatch || mainCategories[0];
-
+  // Step 2: Validate and correct subcategory
   let finalSubcategory = "";
   if (suggestedSubcategory && acesCategories[finalCategory]) {
     const availableSubcategories = Object.keys(acesCategories[finalCategory]);
-    let subScore = 0;
 
-    for (const subcategory of availableSubcategories) {
-      const score = getSimilarityScore(
-        suggestedSubcategory.toLowerCase(),
-        subcategory.toLowerCase()
-      );
-      if (score > subScore) {
-        subScore = score;
-        finalSubcategory = subcategory;
+    // Try exact match first
+    if (availableSubcategories.includes(suggestedSubcategory)) {
+      finalSubcategory = suggestedSubcategory;
+    } else {
+      // Find closest match
+      let subScore = 0;
+      for (const subcategory of availableSubcategories) {
+        const score = getSimilarityScore(
+          suggestedSubcategory.toLowerCase(),
+          subcategory.toLowerCase()
+        );
+        if (score > subScore) {
+          subScore = score;
+          finalSubcategory = subcategory;
+        }
       }
     }
   }
 
-  // Find best matching part type
+  // If no valid subcategory found, use the first one
+  if (!finalSubcategory && acesCategories[finalCategory]) {
+    finalSubcategory = Object.keys(acesCategories[finalCategory])[0];
+  }
+
+  // Step 3: Validate and correct part type
   let finalPartType = "";
   if (
     suggestedPartType &&
@@ -95,18 +115,34 @@ const validateAndCorrectCategory = (
     acesCategories[finalCategory][finalSubcategory]
   ) {
     const availableParts = acesCategories[finalCategory][finalSubcategory];
-    let partScore = 0;
 
-    for (const partType of availableParts) {
-      const score = getSimilarityScore(
-        suggestedPartType.toLowerCase(),
-        partType.toLowerCase()
-      );
-      if (score > partScore) {
-        partScore = score;
-        finalPartType = partType;
+    // Try exact match first
+    if (availableParts.includes(suggestedPartType)) {
+      finalPartType = suggestedPartType;
+    } else {
+      // Find closest match
+      let partScore = 0;
+      for (const partType of availableParts) {
+        const score = getSimilarityScore(
+          suggestedPartType.toLowerCase(),
+          partType.toLowerCase()
+        );
+        if (score > partScore) {
+          partScore = score;
+          finalPartType = partType;
+        }
       }
     }
+  }
+
+  // If no valid part type found, use the first one from the subcategory
+  if (
+    !finalPartType &&
+    finalSubcategory &&
+    acesCategories[finalCategory][finalSubcategory]
+  ) {
+    const availableParts = acesCategories[finalCategory][finalSubcategory];
+    finalPartType = availableParts[0] || "";
   }
 
   return {
@@ -478,32 +514,50 @@ const processSingleBatch = async (batch, apiKey) => {
     })
     .join("\n\n---\n\n");
 
-  const acesPrompt = getAcesCategoriesPrompt(true); // compact
+  const acesPrompt = getAcesCategoriesPrompt(true); // Include part types
 
-  // Use a short, precise system prompt to reduce token usage and enforce format
-  const systemPrompt = `You are an expert ACES product classifier. Use only the ACES categories listed below. Be concise and return ONLY a JSON array with ${batch.length} objects corresponding to the input products.
+  // Enhanced system prompt with clear categorization rules
+  const systemPrompt = `You are an expert automotive parts classifier using ACES (Aftermarket Catalog Exchange Standard) categories.
+
+CRITICAL RULES:
+1. Use ONLY the exact category, subcategory, and part type names from the list below
+2. Analyze the product name, title, description, and brand to identify the specific automotive part
+3. Always provide a specific part type - never leave it empty
+4. Match to the most specific part type available
+
+Common Examples:
+- "Brake Pad" → category: "Brake System", subcategory: "Brake Components", partType: "Brake Pads"
+- "Oil Filter" → category: "Engine", subcategory: "Oil System", partType: "Oil Filters"
+- "Spark Plug" → category: "Electrical", subcategory: "Ignition System", partType: "Spark Plugs"
+- "Air Filter" → category: "Engine", subcategory: "Air Intake System", partType: "Air Filters"
+
 ${acesPrompt}
-Return each object with keys: category, subcategory, partType, confidence (0-100). Do not include any explanation or extra text.`;
 
-  const userPrompt = `${productsText}
+Return ONLY a JSON array with exactly ${batch.length} objects. Each object MUST have: category, subcategory, partType, confidence.`;
 
-Respond with ONLY a JSON array in this exact format:
+  const userPrompt = `Classify these automotive products using the exact ACES category names provided above:
+
+${productsText}
+
+For each product, analyze the name, title, description, and brand to determine:
+1. The main ACES category (e.g., "Brake System", "Engine", "Electrical")
+2. The specific subcategory (e.g., "Brake Components", "Oil System", "Ignition System")  
+3. The exact part type (e.g., "Brake Pads", "Oil Filters", "Spark Plugs")
+
+Example classifications:
+- Brake pad product → {"category": "Brake System", "subcategory": "Brake Components", "partType": "Brake Pads", "confidence": 95}
+- Oil filter product → {"category": "Engine", "subcategory": "Oil System", "partType": "Oil Filters", "confidence": 95}
+- Spark plug product → {"category": "Electrical", "subcategory": "Ignition System", "partType": "Spark Plugs", "confidence": 95}
+
+Respond with ONLY a JSON array - no explanatory text:
 [
   {
-    "category": "exact ACES main category name",
+    "category": "exact ACES category name",
     "subcategory": "exact ACES subcategory name",
     "partType": "exact ACES part type name",
     "confidence": 85
-  },
-  {
-    "category": "another exact ACES main category",
-    "subcategory": "another exact ACES subcategory",
-    "partType": "another exact ACES part type",
-    "confidence": 92
   }
-]
-
-Do not include any explanatory text, markdown formatting, or additional content. Only the JSON array.`;
+]`;
 
   // Helper: robustly parse assistant content which may be plain JSON,
   // fenced code, or a string-escaped JSON blob. Returns null on failure.
@@ -683,37 +737,72 @@ Do not include any explanatory text, markdown formatting, or additional content.
 
   // Validate and correct each result to ensure ACES compliance
   return results.map((result = {}, index) => {
-    // Normalize fields
+    const product = batch[index];
+
+    // Normalize fields from AI response
     const suggestedCategory = result.category || result.Category || "";
     const suggestedSubcategory =
       result.subcategory || result.Subcategory || result.subCategory || "";
     const suggestedPartType =
-      result.partType || result.partType || result.part || "";
+      result.partType || result.PartType || result.part || "";
     const rawConfidence =
       Number(result.confidence || result.confidenceScore || 0) || 0;
 
+    // Log AI response for debugging (first few products only)
+    if (index < 3) {
+      console.log(`AI Response for "${product.name}":`, {
+        category: suggestedCategory,
+        subcategory: suggestedSubcategory,
+        partType: suggestedPartType,
+        confidence: rawConfidence,
+      });
+    }
+
+    // Validate and correct the AI suggestions
     const corrected = validateAndCorrectCategory(
       suggestedCategory,
       suggestedSubcategory,
       suggestedPartType
     );
 
-    // Apply keyword-based validation to catch obvious misclassifications
-    const keywordValidation = validateCategoryWithKeywords(
-      batch[index],
-      corrected.category,
-      corrected.subcategory
-    );
-
     let finalCategory = corrected.category;
     let finalSubcategory = corrected.subcategory;
     let finalPartType = corrected.partType;
+    let finalConfidence = Math.min(
+      100,
+      Math.max(0, Math.round(rawConfidence) || 0)
+    );
+
+    // If AI didn't provide valid categories, use local categorizer as fallback
+    if (!finalCategory || !finalSubcategory || !finalPartType) {
+      console.log(`Using local categorizer fallback for: ${product.name}`);
+
+      const localResult = suggestCategory(
+        product.name || "",
+        product.description || "",
+        product.brand || "",
+        product.title || "",
+        product.originalCategory || ""
+      );
+
+      if (localResult && localResult.category) {
+        finalCategory = localResult.category;
+        finalSubcategory = localResult.subcategory;
+        finalPartType = localResult.partType;
+        finalConfidence = Math.max(30, localResult.confidence - 20); // Lower confidence for fallback
+      }
+    }
+
+    // Apply keyword-based validation to catch obvious misclassifications
+    const keywordValidation = validateCategoryWithKeywords(
+      product,
+      finalCategory,
+      finalSubcategory
+    );
 
     if (keywordValidation.shouldOverride) {
       console.log(
-        `Overriding AI classification for product ${index + 1}: ${
-          keywordValidation.reason
-        }`
+        `Overriding classification for "${product.name}": ${keywordValidation.reason}`
       );
       finalCategory = keywordValidation.overrideCategory;
       finalSubcategory = keywordValidation.overrideSubcategory;
@@ -721,12 +810,23 @@ Do not include any explanatory text, markdown formatting, or additional content.
         acesCategories[finalCategory]?.[finalSubcategory]?.[0] || "";
     }
 
+    // Final validation - ensure we have complete, valid ACES data
+    if (!finalCategory || !acesCategories[finalCategory]) {
+      finalCategory = Object.keys(acesCategories)[0]; // Default to first category
+    }
+    if (!finalSubcategory || !acesCategories[finalCategory][finalSubcategory]) {
+      finalSubcategory = Object.keys(acesCategories[finalCategory])[0]; // Default to first subcategory
+    }
+    if (!finalPartType) {
+      finalPartType = acesCategories[finalCategory][finalSubcategory][0] || "";
+    }
+
     return {
-      ...batch[index],
+      ...product,
       suggestedCategory: finalCategory,
       suggestedSubcategory: finalSubcategory,
       suggestedPartType: finalPartType,
-      confidence: Math.min(100, Math.max(0, Math.round(rawConfidence) || 0)),
+      confidence: finalConfidence,
     };
   });
 };
