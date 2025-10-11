@@ -484,13 +484,14 @@ const AcesPiesCategorizationTool = () => {
         </div>
       )}
 
-      <FileUpload 
-        onFileUpload={handleFileUpload} 
-        isProcessing={isProcessing} 
+      <FileUpload
+        onFileUpload={handleFileUpload}
+        isProcessing={isProcessing}
         onClearFile={() => {
           setProducts([]);
           setValidationResults(null);
-            
+          setCurrentPage(1);
+          setCategories(acesCategories);
         }}
       />
 
