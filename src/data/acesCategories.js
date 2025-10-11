@@ -144,10 +144,18 @@ const acesCategories = {
       "Gasket Makers",
       "Thread Sealants",
       "Epoxy Adhesives",
+      "Windshield Adhesives",
+      "General Trim Adhesives",
+      "Trim Adhesives",
+      "Repair Tapes",
+      "Masking Tapes",
+      "Molding Tapes",
+      "Electrical Tape",
     ],
     "Body & Paint Supplies": [
       "Sandpaper",
       "Sanding Discs",
+      "Abrasive Sheets",
       "Body Filler",
       "Primer",
       "Touch Up Paint",
@@ -174,22 +182,29 @@ const acesCategories = {
       "Screwdrivers",
       "Pliers",
       "Hammers",
+      "Hand Pads",
     ],
     "Power Tools": [
       "Electric Drills",
       "Angle Grinders",
       "Impact Drivers",
       "Reciprocating Saws",
+      "Disc Pad Assemblies",
     ],
-  },
-
-  "Welding Supplies": {
     "Metal Working Abrasives": [
       "Cutting Wheels",
       "Grinding Wheels",
       "Flap Discs",
       "Wire Brushes",
+      "Abrasive Discs",
+      "Surface Conditioning Discs",
+      "Bristle Discs",
+      "Sanding Discs",
     ],
+  },
+
+  "Welding Supplies": {
+    "Welding Abrasives": ["Welding Wire Brushes", "Welding Grinding Wheels"],
     "Welding Equipment": ["MIG Welders", "TIG Welders", "Welding Helmets"],
   },
 
@@ -199,6 +214,7 @@ const acesCategories = {
       "Work Gloves",
       "Hard Hats",
       "Safety Vests",
+      "Chin Straps",
     ],
     "Vehicle Safety": [
       "Warning Triangles",

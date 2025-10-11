@@ -9,40 +9,44 @@ const PREFILTER_CONFIDENCE_THRESHOLD =
   Number(process.env.REACT_APP_PREFILTER_CONFIDENCE) || 95;
 const OPENAI_MODEL = process.env.REACT_APP_OPENAI_MODEL || "gpt-4o-mini";
 
-// Enhanced ACES categories prompt that includes part types for accurate AI categorization
-const getAcesCategoriesPrompt = (includePartTypes = true) => {
+// Professional automotive parts categorization prompt with domain expertise
+const getAcesCategoriesPrompt = () => {
   const mainCategories = Object.keys(acesCategories);
 
-  if (!includePartTypes) {
-    // Compact version without part types
-    let prompt = "ACES Categories:\n";
-    mainCategories.forEach((category) => {
-      prompt += `${category}: `;
-      const subcategories = Object.keys(acesCategories[category]);
-      prompt += subcategories.join(", ");
-      prompt += "\n";
-    });
-    return prompt;
-  }
+  let prompt = "AUTOMOTIVE PARTS CATEGORIZATION REFERENCE - ACES STANDARD\n\n";
 
-  // Full version with part types - essential for AI to know what part types exist
-  let prompt =
-    "ACES Automotive Categories with Part Types (use exact names):\n\n";
+  // Add automotive context and common part patterns
+  prompt += "AUTOMOTIVE CATEGORIZATION RULES:\n";
+  prompt += "• Brake components → 'Brake System' category\n";
+  prompt += "• Engine/motor oil, filters, cooling → 'Engine' category\n";
+  prompt +=
+    "• Electrical items (batteries, alternators, spark plugs) → 'Electrical' category\n";
+  prompt +=
+    "• Tools, abrasives, cutting/grinding → 'Tools & Equipment' category\n";
+  prompt +=
+    "• Body supplies, paint, sandpaper → 'Fluids & Chemicals' category\n";
+  prompt +=
+    "• Steering, suspension, shocks → 'Steering & Suspension' category\n\n";
+
+  // Add comprehensive ACES categories with part types
+  prompt += "COMPLETE ACES CATEGORIES (use exact names):\n\n";
+
   mainCategories.forEach((category) => {
     prompt += `${category}:\n`;
     const subcategories = Object.keys(acesCategories[category]);
     subcategories.forEach((subcategory) => {
       const partTypes = acesCategories[category][subcategory];
       if (partTypes && partTypes.length > 0) {
-        prompt += `  • ${subcategory}: ${partTypes.join(", ")}\n`;
+        prompt += `  ▶ ${subcategory}: ${partTypes.join(", ")}\n`;
       }
     });
     prompt += "\n";
   });
+
   return prompt;
 };
 
-// Enhanced validation to ensure proper ACES category mapping
+// Professional automotive categorization validation with domain expertise
 const validateAndCorrectCategory = (
   suggestedCategory,
   suggestedSubcategory = null,
@@ -54,60 +58,92 @@ const validateAndCorrectCategory = (
 
   const mainCategories = Object.keys(acesCategories);
 
-  // Step 1: Validate and correct main category
+  // Step 1: Validate main category with exact matching priority
   let finalCategory = "";
-
-  // Try exact match first
   if (acesCategories[suggestedCategory]) {
     finalCategory = suggestedCategory;
   } else {
-    // Find closest matching main category
-    let bestMatch = "";
-    let bestScore = 0;
+    // Use automotive domain knowledge for better matching
+    const categoryMap = {
+      brake: "Brake System",
+      engine: "Engine",
+      motor: "Engine",
+      electrical: "Electrical",
+      electric: "Electrical",
+      tool: "Tools & Equipment",
+      equipment: "Tools & Equipment",
+      abrasive: "Tools & Equipment",
+      fluid: "Fluids & Chemicals",
+      chemical: "Fluids & Chemicals",
+      paint: "Fluids & Chemicals",
+      steering: "Steering & Suspension",
+      suspension: "Steering & Suspension",
+      air: "Air System",
+      fuel: "Fuel System",
+      exhaust: "Exhaust & Aftertreatment",
+      body: "Body & Cab",
+      trailer: "Trailer Parts",
+      wheel: "Wheel End",
+      tire: "Wheel End",
+    };
 
-    for (const category of mainCategories) {
-      const score = getSimilarityScore(
-        suggestedCategory.toLowerCase(),
-        category.toLowerCase()
-      );
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = category;
+    const lowerSuggested = suggestedCategory.toLowerCase();
+    for (const [keyword, category] of Object.entries(categoryMap)) {
+      if (lowerSuggested.includes(keyword)) {
+        finalCategory = category;
+        break;
       }
     }
-    finalCategory = bestMatch || mainCategories[0];
+
+    // If still no match, find best similarity match
+    if (!finalCategory) {
+      let bestScore = 0;
+      for (const category of mainCategories) {
+        const score = getSimilarityScore(
+          lowerSuggested,
+          category.toLowerCase()
+        );
+        if (score > bestScore && score > 0.3) {
+          // Minimum threshold
+          bestScore = score;
+          finalCategory = category;
+        }
+      }
+    }
+
+    // Fallback to first category if no good match
+    finalCategory = finalCategory || mainCategories[0];
   }
 
-  // Step 2: Validate and correct subcategory
+  // Step 2: Validate subcategory with automotive logic
   let finalSubcategory = "";
   if (suggestedSubcategory && acesCategories[finalCategory]) {
     const availableSubcategories = Object.keys(acesCategories[finalCategory]);
 
-    // Try exact match first
     if (availableSubcategories.includes(suggestedSubcategory)) {
       finalSubcategory = suggestedSubcategory;
     } else {
-      // Find closest match
-      let subScore = 0;
+      // Find best match with higher threshold
+      let bestScore = 0;
       for (const subcategory of availableSubcategories) {
         const score = getSimilarityScore(
           suggestedSubcategory.toLowerCase(),
           subcategory.toLowerCase()
         );
-        if (score > subScore) {
-          subScore = score;
+        if (score > bestScore && score > 0.4) {
+          bestScore = score;
           finalSubcategory = subcategory;
         }
       }
     }
   }
 
-  // If no valid subcategory found, use the first one
+  // Use first subcategory if no match
   if (!finalSubcategory && acesCategories[finalCategory]) {
     finalSubcategory = Object.keys(acesCategories[finalCategory])[0];
   }
 
-  // Step 3: Validate and correct part type
+  // Step 3: Validate part type with exact matching priority
   let finalPartType = "";
   if (
     suggestedPartType &&
@@ -116,33 +152,41 @@ const validateAndCorrectCategory = (
   ) {
     const availableParts = acesCategories[finalCategory][finalSubcategory];
 
-    // Try exact match first
     if (availableParts.includes(suggestedPartType)) {
       finalPartType = suggestedPartType;
     } else {
-      // Find closest match
-      let partScore = 0;
+      // Find best match with automotive context - be more conservative
+      let bestScore = 0;
+      let bestMatch = "";
       for (const partType of availableParts) {
         const score = getSimilarityScore(
           suggestedPartType.toLowerCase(),
           partType.toLowerCase()
         );
-        if (score > partScore) {
-          partScore = score;
-          finalPartType = partType;
+        if (score > bestScore && score > 0.7) {
+          // Much higher threshold - only very close matches
+          bestScore = score;
+          bestMatch = partType;
         }
       }
+      finalPartType = bestMatch;
     }
   }
 
-  // If no valid part type found, use the first one from the subcategory
+  // Only use first part type as absolute last resort, prefer to keep the suggested part type
   if (
     !finalPartType &&
     finalSubcategory &&
     acesCategories[finalCategory][finalSubcategory]
   ) {
-    const availableParts = acesCategories[finalCategory][finalSubcategory];
-    finalPartType = availableParts[0] || "";
+    // If the AI suggested a reasonable part type but it's not in our ACES list,
+    // prefer the AI suggestion over forcing a wrong ACES part type
+    if (suggestedPartType && suggestedPartType.trim()) {
+      finalPartType = suggestedPartType; // Keep AI suggestion even if not in ACES
+    } else {
+      const availableParts = acesCategories[finalCategory][finalSubcategory];
+      finalPartType = availableParts[0] || "";
+    }
   }
 
   return {
@@ -152,19 +196,172 @@ const validateAndCorrectCategory = (
   };
 };
 
-// Simple string similarity scoring
+// Professional product data analysis with weighted importance
+const analyzeProductData = (product) => {
+  // Weight different fields by importance for automotive categorization
+  const weights = {
+    name: 1.0, // Product name is most important
+    title: 0.9, // Title is nearly as important
+    description: 0.7, // Description provides context
+    brand: 0.5, // Brand can indicate category patterns
+    specifications: 0.6, // Specs help with technical details
+    category: 0.3, // Original category may be unreliable
+    partNumber: 0.4, // Part numbers sometimes contain hints
+  };
+
+  // Extract and clean text from each field
+  const fields = {
+    name: (product.name || "").trim(),
+    title: (product.title || "").trim(),
+    description: (product.description || "").replace(/<[^>]*>/g, " ").trim(), // Remove HTML
+    brand: (product.brand || "").trim(),
+    specifications: (product.specifications || "").trim(),
+    category: (product.originalCategory || product.category || "").trim(),
+    partNumber: (product.partNumber || product.sku || product.mpn || "").trim(),
+  };
+
+  // Create weighted text for analysis
+  let weightedText = "";
+  let totalWeight = 0;
+
+  for (const [field, text] of Object.entries(fields)) {
+    if (text && weights[field]) {
+      const weight = weights[field];
+      // Repeat text based on weight (round to whole number)
+      const repetitions = Math.max(1, Math.round(weight * 3));
+      for (let i = 0; i < repetitions; i++) {
+        weightedText += text + " ";
+      }
+      totalWeight += weight;
+    }
+  }
+
+  // Extract key automotive indicators
+  const indicators = extractAutomotiveIndicators(weightedText.toLowerCase());
+
+  return {
+    weightedText: weightedText.trim(),
+    primaryText: fields.name || fields.title || fields.description || "",
+    brand: fields.brand,
+    totalWeight,
+    indicators,
+    cleanFields: fields,
+  };
+};
+
+// Extract automotive-specific indicators from product text
+const extractAutomotiveIndicators = (text) => {
+  const indicators = {
+    partType: null,
+    category: null,
+    confidence: 0,
+    keywords: [],
+  };
+
+  // Define high-confidence automotive part indicators
+  const partIndicators = {
+    "Brake Pads": ["brake pad", "disc brake pad", "ceramic brake pad"],
+    "Brake Rotors": ["brake rotor", "brake disc", "disc rotor"],
+    "Oil Filters": ["oil filter", "engine oil filter", "lube filter"],
+    "Air Filters": ["air filter", "engine air filter", "intake filter"],
+    "Spark Plugs": ["spark plug", "ignition plug", "glow plug"],
+    "Water Pumps": ["water pump", "coolant pump", "cooling pump"],
+    Alternators: ["alternator", "generator", "charging system"],
+    Starters: ["starter", "starter motor", "starting motor"],
+    Batteries: ["battery", "automotive battery", "car battery"],
+    Radiators: ["radiator", "cooling radiator", "heat exchanger"],
+    Thermostats: ["thermostat", "cooling thermostat", "engine thermostat"],
+    "Fuel Pumps": ["fuel pump", "electric fuel pump", "mechanical fuel pump"],
+    "Fuel Filters": ["fuel filter", "gas filter", "petrol filter"],
+    "Timing Belts": ["timing belt", "cam belt", "camshaft belt"],
+    "Serpentine Belts": ["serpentine belt", "drive belt", "accessory belt"],
+    "Shock Absorbers": ["shock absorber", "shock", "strut"],
+    "Tie Rods": ["tie rod", "tie rod end", "steering tie rod"],
+    "Ball Joints": [
+      "ball joint",
+      "suspension ball joint",
+      "steering ball joint",
+    ],
+  };
+
+  // Check for specific part type matches
+  for (const [partType, keywords] of Object.entries(partIndicators)) {
+    for (const keyword of keywords) {
+      if (text.includes(keyword)) {
+        if (
+          !indicators.partType ||
+          keyword.length > (indicators.matchedKeyword || "").length
+        ) {
+          indicators.partType = partType;
+          indicators.matchedKeyword = keyword;
+          indicators.confidence = keyword.split(" ").length * 20; // Longer matches = higher confidence
+        }
+        indicators.keywords.push(keyword);
+      }
+    }
+  }
+
+  // Extract brand patterns that indicate categories
+  const brandCategories = {
+    "3M": ["Tools & Equipment", "Fluids & Chemicals"],
+    Gates: ["Engine"],
+    ACDelco: ["Engine", "Electrical"],
+    Motorcraft: ["Engine", "Electrical"],
+    Bosch: ["Engine", "Electrical"],
+    Wagner: ["Brake System"],
+    Bendix: ["Brake System"],
+    Monroe: ["Steering & Suspension"],
+    Gabriel: ["Steering & Suspension"],
+    Fram: ["Engine"],
+    Wix: ["Engine"],
+    Champion: ["Electrical"],
+    NGK: ["Electrical"],
+    Denso: ["Electrical", "Engine"],
+  };
+
+  // Check for brand-based category hints
+  for (const [brand, categories] of Object.entries(brandCategories)) {
+    if (text.includes(brand.toLowerCase())) {
+      indicators.brandCategories = categories;
+      break;
+    }
+  }
+
+  return indicators;
+};
+
+// Enhanced string similarity scoring with automotive context
 const getSimilarityScore = (str1, str2) => {
   if (str1 === str2) return 1;
   if (str1.includes(str2) || str2.includes(str1)) return 0.8;
 
-  const words1 = str1.split(" ");
-  const words2 = str2.split(" ");
-  const commonWords = words1.filter((word) => words2.includes(word)).length;
+  const words1 = str1.split(/\s+/).filter((w) => w.length > 2);
+  const words2 = str2.split(/\s+/).filter((w) => w.length > 2);
 
-  return commonWords / Math.max(words1.length, words2.length);
+  if (words1.length === 0 || words2.length === 0) return 0;
+
+  const commonWords = words1.filter((word) => words2.includes(word)).length;
+  const similarity = commonWords / Math.max(words1.length, words2.length);
+
+  // Boost similarity for automotive-specific word matches
+  const automotiveWords = [
+    "brake",
+    "engine",
+    "oil",
+    "filter",
+    "pump",
+    "belt",
+    "electrical",
+    "fuel",
+  ];
+  const automotiveMatches = words1.filter(
+    (word) => automotiveWords.includes(word) && words2.includes(word)
+  ).length;
+
+  return Math.min(1, similarity + automotiveMatches * 0.1);
 };
 
-// Keyword-based validation to catch obvious misclassifications
+// Professional automotive keyword validation with comprehensive patterns
 const validateCategoryWithKeywords = (
   product,
   suggestedCategory,
@@ -181,104 +378,336 @@ const validateCategoryWithKeywords = (
     .join(" ")
     .toLowerCase();
 
-  // Define keyword patterns for different categories
-  const keywordPatterns = {
-    "Tools & Equipment": {
-      keywords: [
-        "abrasive",
-        "grinding",
-        "cutting",
-        "drill",
-        "wrench",
-        "hammer",
-        "screwdriver",
-        "pliers",
-        "tool",
-        "disc",
-        "wheel",
-        "brush",
-        "polish",
-        "sandpaper",
-        "file",
-        "saw",
+  // DEBUG: Log what text we're analyzing
+  console.log(
+    `Keyword validation analyzing: "${productText.substring(0, 100)}..."`
+  );
+  console.log(`Current suggested category: "${suggestedCategory}"`);
+
+  // Comprehensive automotive keyword patterns with confidence weights
+  const categoryKeywords = {
+    "Brake System": {
+      strong: [
+        "brake pad",
+        "brake rotor",
+        "brake disc",
+        "brake drum",
+        "brake shoe",
+        "brake caliper",
+        "brake master",
+        "brake line",
+        "brake hose",
+        "abs",
+      ],
+      medium: ["brake", "braking", "rotor", "caliper", "pad"],
+      subcategories: {
+        "Brake Components": ["pad", "rotor", "disc", "drum", "shoe", "caliper"],
+        "Brake Hydraulics": ["master", "line", "hose", "abs", "hydraulic"],
+      },
+    },
+    Engine: {
+      strong: [
+        "oil filter",
+        "air filter",
+        "water pump",
+        "thermostat",
+        "radiator",
+        "timing belt",
+        "timing chain",
+        "oil pump",
+      ],
+      medium: [
+        "engine",
+        "motor",
+        "oil",
+        "coolant",
+        "cooling",
+        "filter",
+        "pump",
+        "belt",
+        "timing",
       ],
       subcategories: {
-        "Metal Working Abrasives": [
-          "abrasive",
-          "grinding",
-          "cutting",
-          "disc",
-          "wheel",
-          "brush",
-          "polish",
+        "Oil System": [
+          "oil filter",
+          "oil pump",
+          "oil pan",
+          "oil cooler",
+          "oil pressure",
+        ],
+        "Air Intake System": [
+          "air filter",
+          "intake",
+          "throttle",
+          "mass airflow",
+        ],
+        "Cooling System": [
+          "radiator",
+          "water pump",
+          "thermostat",
+          "cooling fan",
+          "coolant",
+        ],
+        "Timing Components": [
+          "timing belt",
+          "timing chain",
+          "sprocket",
+          "tensioner",
         ],
       },
     },
     Electrical: {
-      keywords: [
+      strong: [
         "spark plug",
-        "battery",
+        "ignition coil",
         "alternator",
         "starter",
-        "sensor",
-        "switch",
-        "wire",
-        "cable",
-        "fuse",
-        "relay",
-        "coil",
-        "ignition",
-        "electrical",
+        "battery",
+        "spark plug wire",
       ],
-      avoidKeywords: [
-        "abrasive",
+      medium: [
+        "electrical",
+        "electric",
+        "spark",
+        "ignition",
+        "alternator",
+        "starter",
+        "battery",
+        "coil",
+        "wire",
+      ],
+      avoid: ["grinding", "cutting", "abrasive", "sandpaper", "disc", "wheel"],
+      subcategories: {
+        "Ignition System": ["spark plug", "ignition coil", "spark plug wire"],
+        "Charging System": [
+          "alternator",
+          "starter",
+          "battery",
+          "battery cable",
+        ],
+        Lighting: ["headlight", "tail light", "turn signal", "led"],
+      },
+    },
+    "Tools & Equipment": {
+      strong: [
+        "grinding wheel",
+        "cutting wheel",
+        "flap disc",
+        "wire brush",
+        "sandpaper",
+        "sanding disc",
+      ],
+      medium: [
+        "tool",
+        "grinder",
         "grinding",
         "cutting",
-        "tool",
+        "abrasive",
         "disc",
         "wheel",
+        "brush",
+        "sand",
+        "polish",
       ],
+      subcategories: {
+        "Metal Working Abrasives": [
+          "grinding",
+          "cutting",
+          "abrasive",
+          "disc",
+          "wheel",
+          "flap",
+          "wire brush",
+        ],
+        "Hand Tools": ["wrench", "socket", "screwdriver", "pliers", "hammer"],
+        "Air Tools": ["air impact", "air ratchet", "air hammer", "air drill"],
+      },
+    },
+    "Fluids & Chemicals": {
+      strong: [
+        "motor oil",
+        "gear oil",
+        "brake cleaner",
+        "degreaser",
+        "body filler",
+        "primer",
+      ],
+      medium: [
+        "oil",
+        "fluid",
+        "cleaner",
+        "chemical",
+        "grease",
+        "lubricant",
+        "paint",
+      ],
+      subcategories: {
+        Lubricants: ["motor oil", "gear oil", "grease", "penetrating oil"],
+        "Cleaners & Degreasers": [
+          "brake cleaner",
+          "degreaser",
+          "all-purpose cleaner",
+        ],
+        "Body & Paint Supplies": [
+          "sandpaper",
+          "body filler",
+          "primer",
+          "paint",
+        ],
+      },
+    },
+    "Steering & Suspension": {
+      strong: [
+        "tie rod",
+        "ball joint",
+        "shock absorber",
+        "strut",
+        "control arm",
+        "sway bar",
+      ],
+      medium: [
+        "steering",
+        "suspension",
+        "shock",
+        "strut",
+        "spring",
+        "tie rod",
+        "ball joint",
+      ],
+      subcategories: {
+        "Steering Components": [
+          "tie rod",
+          "ball joint",
+          "steering gear",
+          "power steering pump",
+        ],
+        "Suspension Components": [
+          "shock absorber",
+          "strut",
+          "spring",
+          "control arm",
+          "sway bar",
+        ],
+      },
+    },
+    "Fuel System": {
+      strong: ["fuel pump", "fuel filter", "fuel injector", "fuel line"],
+      medium: ["fuel", "injector", "pump", "tank"],
+      subcategories: {
+        "Fuel Delivery": [
+          "fuel pump",
+          "fuel filter",
+          "fuel injector",
+          "fuel line",
+        ],
+        "Fuel Storage": ["fuel tank", "fuel cap", "fuel sending unit"],
+      },
     },
   };
 
-  if (
-    keywordPatterns["Tools & Equipment"].keywords.some((keyword) =>
+  // Check for strong keyword matches first
+  for (const [category, patterns] of Object.entries(categoryKeywords)) {
+    // Check avoid keywords - be more specific about what we're avoiding
+    if (
+      patterns.avoid &&
+      patterns.avoid.some((keyword) => productText.includes(keyword))
+    ) {
+      // Only override if it's a clear mismatch (e.g., abrasive disc in Engine category)
+      if (
+        suggestedCategory === category &&
+        productText.includes("abrasive") &&
+        (productText.includes("disc") ||
+          productText.includes("wheel") ||
+          productText.includes("pad"))
+      ) {
+        return {
+          shouldOverride: true,
+          overrideCategory: "Tools & Equipment",
+          overrideSubcategory: "Metal Working Abrasives",
+          reason: `Abrasive product misclassified in ${category}`,
+          confidence: 85, // Slightly lower confidence
+        };
+      }
+    }
+
+    // Check strong keyword matches
+    const strongMatches = patterns.strong.filter((keyword) =>
       productText.includes(keyword)
-    )
-  ) {
-    if (suggestedCategory !== "Tools & Equipment") {
-      console.warn(
-        `Potential misclassification: Product contains tool keywords but categorized as ${suggestedCategory}`
+    );
+    console.log(`${category} - Strong matches found:`, strongMatches);
+
+    if (strongMatches.length > 0 && suggestedCategory !== category) {
+      // Find best subcategory based on matched keywords
+      let bestSubcategory = Object.keys(acesCategories[category])[0];
+      if (patterns.subcategories) {
+        for (const [subcat, keywords] of Object.entries(
+          patterns.subcategories
+        )) {
+          if (keywords.some((keyword) => productText.includes(keyword))) {
+            bestSubcategory = subcat;
+            break;
+          }
+        }
+      }
+
+      console.log(
+        `STRONG KEYWORD OVERRIDE TRIGGERED: ${category} -> ${bestSubcategory}`
       );
       return {
         shouldOverride: true,
-        overrideCategory: "Tools & Equipment",
-        overrideSubcategory: keywordPatterns["Tools & Equipment"].subcategories[
-          "Metal Working Abrasives"
-        ].some((k) => productText.includes(k))
-          ? "Metal Working Abrasives"
-          : "Hand Tools",
-        reason: "Product contains tool/abrasive keywords",
+        overrideCategory: category,
+        overrideSubcategory: bestSubcategory,
+        reason: `Strong keyword match: ${strongMatches.join(", ")}`,
+        confidence: 95,
       };
     }
-  }
 
-  if (
-    keywordPatterns["Electrical"].avoidKeywords.some((keyword) =>
+    // Check medium keyword matches (less aggressive override) - make this more conservative
+    const mediumMatches = patterns.medium.filter((keyword) =>
       productText.includes(keyword)
-    )
-  ) {
-    if (suggestedCategory === "Electrical") {
-      console.warn(
-        `Potential misclassification: Product contains non-electrical keywords but categorized as Electrical`
-      );
-      return {
-        shouldOverride: true,
-        overrideCategory: "Tools & Equipment",
-        overrideSubcategory: "Metal Working Abrasives",
-        reason:
-          "Product contains abrasive/tool keywords incompatible with Electrical",
-      };
+    );
+    console.log(`${category} - Medium matches found:`, mediumMatches);
+
+    // Only override if we have 3+ medium matches AND the current category is really wrong
+    if (mediumMatches.length >= 3 && suggestedCategory !== category) {
+      // Additional check: only override if the suggested category is clearly wrong
+      const isCurrentCategoryBad =
+        !suggestedCategory ||
+        (suggestedCategory === "Engine" && category === "Tools & Equipment") ||
+        (suggestedCategory === "Electrical" &&
+          category === "Tools & Equipment" &&
+          patterns.medium.some(
+            (k) =>
+              ["abrasive", "grinding", "cutting"].includes(k) &&
+              productText.includes(k)
+          ));
+
+      if (isCurrentCategoryBad) {
+        let bestSubcategory = Object.keys(acesCategories[category])[0];
+        if (patterns.subcategories) {
+          for (const [subcat, keywords] of Object.entries(
+            patterns.subcategories
+          )) {
+            if (keywords.some((keyword) => productText.includes(keyword))) {
+              bestSubcategory = subcat;
+              break;
+            }
+          }
+        }
+
+        console.log(
+          `MEDIUM KEYWORD OVERRIDE TRIGGERED: ${category} -> ${bestSubcategory}`
+        );
+        return {
+          shouldOverride: true,
+          overrideCategory: category,
+          overrideSubcategory: bestSubcategory,
+          reason: `Multiple keyword matches: ${mediumMatches
+            .slice(0, 3)
+            .join(", ")}`,
+          confidence: 80,
+        };
+      }
     }
   }
 
@@ -297,7 +726,13 @@ export const batchCategorizeWithOpenAI = async (products, progressCallback) => {
 
   if (!products || products.length === 0) return [];
 
-  console.info(`OpenAI categorization start: ${products.length} products`);
+  console.info(`\n========================================`);
+  console.info(`STARTING OPENAI CATEGORIZATION`);
+  console.info(`Total products: ${products.length}`);
+  console.info(`API Key present: ${apiKey ? "YES" : "NO"}`);
+  console.info(`Model: ${OPENAI_MODEL}`);
+  console.info(`Batch size: ${BATCH_SIZE}`);
+  console.info(`========================================\n`);
 
   // 1) Deterministic prefilter - fast local matcher to reduce LLM calls
   const prefilter = products.map((product) => {
@@ -496,68 +931,150 @@ const processBatchWithRetry = async (
 };
 
 const processSingleBatch = async (batch, apiKey) => {
-  const productsText = batch
-    .map((product, index) => {
-      const productText = [
-        `Name: ${product.name || "N/A"}`,
-        `Title: ${product.title || "N/A"}`,
-        `Description: ${product.description || "N/A"}`,
-        `Brand: ${product.brand || "N/A"}`,
-        `Specifications: ${product.specifications || "N/A"}`,
-        `Category: ${product.category || "N/A"}`,
-        `UPC: ${product.upc || "N/A"}`,
-      ]
-        .filter((line) => !line.includes("N/A"))
-        .join("\n");
+  console.log(`\n=== PROCESSING BATCH OF ${batch.length} PRODUCTS ===`);
 
-      return `Product ${index + 1}:\n${productText}`;
-    })
+  // Analyze each product with professional automotive expertise
+  const analyzedProducts = batch.map((product, index) => {
+    // DEBUG: Log original product data
+    console.log(`\n--- PRODUCT ${index + 1} - ORIGINAL DATA ---`);
+    console.log(`Name: "${product.name || "N/A"}"`);
+    console.log(`Title: "${product.title || "N/A"}"`);
+    console.log(
+      `Description: "${(product.description || "N/A").substring(0, 150)}${
+        (product.description || "").length > 150 ? "..." : ""
+      }"`
+    );
+    console.log(`Brand: "${product.brand || "N/A"}"`);
+    console.log(`Specifications: "${product.specifications || "N/A"}"`);
+    console.log(
+      `Part Number: "${
+        product.partNumber || product.sku || product.mpn || "N/A"
+      }"`
+    );
+    console.log(
+      `Original Category: "${
+        product.originalCategory || product.category || "N/A"
+      }"`
+    );
+
+    const analysis = analyzeProductData(product);
+
+    // DEBUG: Log analysis results
+    console.log(`--- PRODUCT ${index + 1} - ANALYSIS RESULTS ---`);
+    console.log(
+      `Weighted Text: "${analysis.weightedText.substring(0, 200)}${
+        analysis.weightedText.length > 200 ? "..." : ""
+      }"`
+    );
+    console.log(`Primary Text: "${analysis.primaryText}"`);
+    console.log(`Indicators:`, analysis.indicators);
+
+    // Create focused product description prioritizing most important fields
+    const productLines = [];
+
+    if (analysis.cleanFields.name) {
+      productLines.push(`Name: ${analysis.cleanFields.name}`);
+    }
+    if (
+      analysis.cleanFields.title &&
+      analysis.cleanFields.title !== analysis.cleanFields.name
+    ) {
+      productLines.push(`Title: ${analysis.cleanFields.title}`);
+    }
+    if (analysis.cleanFields.description) {
+      // Truncate very long descriptions to focus on key information
+      const desc =
+        analysis.cleanFields.description.length > 200
+          ? analysis.cleanFields.description.substring(0, 200) + "..."
+          : analysis.cleanFields.description;
+      productLines.push(`Description: ${desc}`);
+    }
+    if (analysis.cleanFields.brand) {
+      productLines.push(`Brand: ${analysis.cleanFields.brand}`);
+    }
+    if (analysis.cleanFields.specifications) {
+      productLines.push(
+        `Specifications: ${analysis.cleanFields.specifications}`
+      );
+    }
+    if (analysis.cleanFields.partNumber) {
+      productLines.push(`Part Number: ${analysis.cleanFields.partNumber}`);
+    }
+
+    console.log(`--- PRODUCT ${index + 1} - SENT TO AI ---`);
+    console.log(productLines.join("\n"));
+
+    return {
+      index,
+      product,
+      analysis,
+      productText: productLines.join("\n"),
+    };
+  });
+
+  const productsText = analyzedProducts
+    .map((item) => `Product ${item.index + 1}:\n${item.productText}`)
     .join("\n\n---\n\n");
 
-  const acesPrompt = getAcesCategoriesPrompt(true); // Include part types
+  const acesPrompt = getAcesCategoriesPrompt();
 
-  // Enhanced system prompt with clear categorization rules
-  const systemPrompt = `You are an expert automotive parts classifier using ACES (Aftermarket Catalog Exchange Standard) categories.
+  // Professional system prompt with automotive domain expertise
+  const systemPrompt = `You are a professional automotive parts classification expert specializing in ACES (Aftermarket Catalog Exchange Standard) categorization.
 
-CRITICAL RULES:
-1. Use ONLY the exact category, subcategory, and part type names from the list below
-2. Analyze the product name, title, description, and brand to identify the specific automotive part
-3. Always provide a specific part type - never leave it empty
-4. Match to the most specific part type available
+EXPERTISE REQUIREMENTS:
+• 15+ years automotive aftermarket experience
+• Expert knowledge of ACES taxonomy standards  
+• Deep understanding of automotive systems and components
+• Precision in part identification and classification
 
-Common Examples:
-- "Brake Pad" → category: "Brake System", subcategory: "Brake Components", partType: "Brake Pads"
-- "Oil Filter" → category: "Engine", subcategory: "Oil System", partType: "Oil Filters"
-- "Spark Plug" → category: "Electrical", subcategory: "Ignition System", partType: "Spark Plugs"
-- "Air Filter" → category: "Engine", subcategory: "Air Intake System", partType: "Air Filters"
+CLASSIFICATION METHODOLOGY:
+1. PRIORITIZE product name and title - these contain the most accurate part identification
+2. Use description for additional context and specifications
+3. Consider brand reputation and specialization patterns
+4. Apply automotive system knowledge for logical categorization
+5. Ensure complete hierarchy: Category → Subcategory → Part Type
+
+ACCURACY STANDARDS:
+• Minimum 90% classification accuracy required
+• Use exact ACES terminology - no approximations
+• Every product must have all three levels specified
+• High confidence scores (80-95) for clear automotive parts
+
+DOMAIN EXPERTISE EXAMPLES:
+• "Brake Pad" = Brake System → Brake Components → Brake Pads
+• "Oil Filter" = Engine → Oil System → Oil Filters  
+• "Spark Plug" = Electrical → Ignition System → Spark Plugs
+• "Timing Belt" = Engine → Timing Components → Timing Belts
+• "Shock Absorber" = Steering & Suspension → Suspension Components → Shock Absorbers
 
 ${acesPrompt}
 
-Return ONLY a JSON array with exactly ${batch.length} objects. Each object MUST have: category, subcategory, partType, confidence.`;
+OUTPUT REQUIREMENTS:
+Return ONLY a JSON array with exactly ${batch.length} objects. Each object MUST contain:
+{
+  "category": "exact ACES main category name",
+  "subcategory": "exact ACES subcategory name", 
+  "partType": "exact ACES part type name",
+  "confidence": [80-95 for automotive parts, 60-75 for unclear items]
+}`;
 
-  const userPrompt = `Classify these automotive products using the exact ACES category names provided above:
+  const userPrompt = `Classify these automotive products using your professional expertise and the ACES categories provided:
 
 ${productsText}
 
-For each product, analyze the name, title, description, and brand to determine:
-1. The main ACES category (e.g., "Brake System", "Engine", "Electrical")
-2. The specific subcategory (e.g., "Brake Components", "Oil System", "Ignition System")  
-3. The exact part type (e.g., "Brake Pads", "Oil Filters", "Spark Plugs")
+ANALYSIS APPROACH:
+1. Read the product name/title first - this is usually the most accurate identifier
+2. Use description to confirm part function and application
+3. Consider brand context (e.g., 3M = abrasives/chemicals, Gates = belts/hoses)
+4. Apply automotive system knowledge to ensure logical placement
+5. Assign high confidence (85-95) for clear automotive parts, lower (60-75) for ambiguous items
 
-Example classifications:
-- Brake pad product → {"category": "Brake System", "subcategory": "Brake Components", "partType": "Brake Pads", "confidence": 95}
-- Oil filter product → {"category": "Engine", "subcategory": "Oil System", "partType": "Oil Filters", "confidence": 95}
-- Spark plug product → {"category": "Electrical", "subcategory": "Ignition System", "partType": "Spark Plugs", "confidence": 95}
+CLASSIFICATION EXAMPLES:
+- Product with "Brake Pad" in name → {"category": "Brake System", "subcategory": "Brake Components", "partType": "Brake Pads", "confidence": 95}
+- Product with "Oil Filter" in name → {"category": "Engine", "subcategory": "Oil System", "partType": "Oil Filters", "confidence": 95}  
+- Product with "Grinding Disc" → {"category": "Tools & Equipment", "subcategory": "Metal Working Abrasives", "partType": "Grinding Wheels", "confidence": 90}
 
-Respond with ONLY a JSON array - no explanatory text:
-[
-  {
-    "category": "exact ACES category name",
-    "subcategory": "exact ACES subcategory name",
-    "partType": "exact ACES part type name",
-    "confidence": 85
-  }
-]`;
+Provide professional-grade classifications with JSON array only:`;
 
   // Helper: robustly parse assistant content which may be plain JSON,
   // fenced code, or a string-escaped JSON blob. Returns null on failure.
@@ -685,6 +1202,15 @@ Respond with ONLY a JSON array - no explanatory text:
     throw new Error("Empty response from OpenAI");
   }
 
+  // DEBUG: Log raw AI response
+  console.log(`\n=== RAW AI RESPONSE ===`);
+  console.log(`Content length: ${content.length} characters`);
+  console.log(
+    `Raw content: ${content.substring(0, 500)}${
+      content.length > 500 ? "..." : ""
+    }`
+  );
+
   const resultsRaw = tryParseAssistantContent(
     typeof content === "string" ? content.trim() : content
   );
@@ -701,6 +1227,19 @@ Respond with ONLY a JSON array - no explanatory text:
       error: "Invalid or unparsable response from AI",
     }));
   }
+
+  // DEBUG: Log parsed AI results
+  console.log(`\n=== PARSED AI RESULTS ===`);
+  console.log(`Number of results: ${resultsRaw.length}`);
+  console.log(`Expected results: ${batch.length}`);
+  resultsRaw.forEach((result, idx) => {
+    console.log(`Result ${idx + 1}:`, {
+      category: result.category || result.Category || "N/A",
+      subcategory: result.subcategory || result.Subcategory || "N/A",
+      partType: result.partType || result.PartType || "N/A",
+      confidence: result.confidence || result.confidenceScore || "N/A",
+    });
+  });
 
   // If assistant returned more items than products, try to reduce intelligently.
   let results = resultsRaw;
@@ -735,47 +1274,199 @@ Respond with ONLY a JSON array - no explanatory text:
     results = results.concat(pad);
   }
 
-  // Validate and correct each result to ensure ACES compliance
+  // Professional validation and result processing with automotive expertise
   return results.map((result = {}, index) => {
     const product = batch[index];
+    const analysis = analyzedProducts[index]?.analysis;
 
-    // Normalize fields from AI response
-    const suggestedCategory = result.category || result.Category || "";
+    // Normalize fields from AI response with multiple field name support
+    const suggestedCategory =
+      result.category || result.Category || result.mainCategory || "";
     const suggestedSubcategory =
-      result.subcategory || result.Subcategory || result.subCategory || "";
+      result.subcategory ||
+      result.Subcategory ||
+      result.subCategory ||
+      result.sub_category ||
+      "";
     const suggestedPartType =
-      result.partType || result.PartType || result.part || "";
+      result.partType ||
+      result.PartType ||
+      result.part_type ||
+      result.part ||
+      "";
     const rawConfidence =
-      Number(result.confidence || result.confidenceScore || 0) || 0;
+      Number(
+        result.confidence || result.confidenceScore || result.score || 0
+      ) || 0;
 
-    // Log AI response for debugging (first few products only)
-    if (index < 3) {
-      console.log(`AI Response for "${product.name}":`, {
-        category: suggestedCategory,
-        subcategory: suggestedSubcategory,
-        partType: suggestedPartType,
-        confidence: rawConfidence,
-      });
-    }
+    // DEBUG: Detailed logging for each product processing
+    console.log(`\n--- PRODUCT ${index + 1} - AI RESPONSE PROCESSING ---`);
+    console.log(`Product Name: "${product.name || "N/A"}"`);
+    console.log(`AI Raw Response:`, {
+      category: suggestedCategory,
+      subcategory: suggestedSubcategory,
+      partType: suggestedPartType,
+      confidence: rawConfidence,
+    });
+    console.log(`Analysis Indicators:`, analysis?.indicators);
 
-    // Validate and correct the AI suggestions
-    const corrected = validateAndCorrectCategory(
+    // Apply keyword-based validation FIRST to catch obvious patterns
+    const keywordValidation = validateCategoryWithKeywords(
+      product,
       suggestedCategory,
-      suggestedSubcategory,
-      suggestedPartType
+      suggestedSubcategory
     );
 
-    let finalCategory = corrected.category;
-    let finalSubcategory = corrected.subcategory;
-    let finalPartType = corrected.partType;
+    let finalCategory = suggestedCategory;
+    let finalSubcategory = suggestedSubcategory;
+    let finalPartType = suggestedPartType;
     let finalConfidence = Math.min(
       100,
       Math.max(0, Math.round(rawConfidence) || 0)
     );
+    let validationReason = "AI classification";
 
-    // If AI didn't provide valid categories, use local categorizer as fallback
-    if (!finalCategory || !finalSubcategory || !finalPartType) {
-      console.log(`Using local categorizer fallback for: ${product.name}`);
+    console.log(`Keyword Validation Result:`, keywordValidation);
+
+    // Only override with keyword validation if the current AI suggestion is clearly wrong
+    // Be much more conservative to avoid overriding good AI suggestions
+    if (
+      keywordValidation.shouldOverride &&
+      keywordValidation.confidence > 80 && // Require very high confidence
+      finalConfidence < 60
+    ) {
+      // Only if AI confidence is low
+
+      console.log(
+        `KEYWORD OVERRIDE for "${product.name}" (AI confidence was low: ${finalConfidence})`
+      );
+      console.log(
+        `  From: ${finalCategory} -> ${finalSubcategory} -> ${finalPartType}`
+      );
+
+      finalCategory = keywordValidation.overrideCategory;
+      finalSubcategory = keywordValidation.overrideSubcategory;
+      // Keep AI part type if it exists and makes sense
+      if (!finalPartType || finalPartType === "Unknown") {
+        finalPartType =
+          acesCategories[finalCategory]?.[finalSubcategory]?.[0] || "";
+      }
+      finalConfidence = keywordValidation.confidence;
+      validationReason = keywordValidation.reason;
+
+      console.log(
+        `  To: ${finalCategory} -> ${finalSubcategory} -> ${finalPartType}`
+      );
+      console.log(`  Reason: ${validationReason}`);
+    } else if (keywordValidation.shouldOverride) {
+      console.log(`KEYWORD OVERRIDE SKIPPED for "${product.name}"`);
+      console.log(
+        `  Keyword confidence: ${keywordValidation.confidence}, AI confidence: ${finalConfidence}`
+      );
+      console.log(
+        `  Keeping AI suggestion: ${finalCategory} -> ${finalSubcategory} -> ${finalPartType}`
+      );
+    }
+
+    // Validate and correct the final suggestions using ACES taxonomy
+    const corrected = validateAndCorrectCategory(
+      finalCategory,
+      finalSubcategory,
+      finalPartType
+    );
+
+    console.log(`ACES Validation Result:`, corrected);
+    console.log(
+      `Before ACES correction: ${finalCategory} -> ${finalSubcategory} -> ${finalPartType}`
+    );
+
+    // Only apply ACES corrections if the current values are invalid or empty
+    // Don't over-correct good AI suggestions
+
+    if (!finalCategory || !acesCategories[finalCategory]) {
+      if (corrected.category && acesCategories[corrected.category]) {
+        console.log(
+          `ACES CATEGORY CORRECTION: "${finalCategory}" -> "${corrected.category}"`
+        );
+        finalCategory = corrected.category;
+      }
+    }
+
+    if (
+      !finalSubcategory ||
+      !acesCategories[finalCategory]?.[finalSubcategory]
+    ) {
+      if (
+        corrected.subcategory &&
+        acesCategories[finalCategory]?.[corrected.subcategory]
+      ) {
+        console.log(
+          `ACES SUBCATEGORY CORRECTION: "${finalSubcategory}" -> "${corrected.subcategory}"`
+        );
+        finalSubcategory = corrected.subcategory;
+      }
+    }
+
+    // For part types, be even more conservative - only correct if the current part type doesn't exist
+    // AND the corrected one does exist
+    if (
+      finalPartType &&
+      finalSubcategory &&
+      acesCategories[finalCategory]?.[finalSubcategory]
+    ) {
+      const availableParts = acesCategories[finalCategory][finalSubcategory];
+      if (
+        !availableParts.includes(finalPartType) &&
+        corrected.partType &&
+        availableParts.includes(corrected.partType)
+      ) {
+        console.log(
+          `ACES PART TYPE CORRECTION: "${finalPartType}" -> "${corrected.partType}"`
+        );
+        finalPartType = corrected.partType;
+      }
+    } else if (!finalPartType && corrected.partType) {
+      console.log(
+        `ACES PART TYPE CORRECTION: "${finalPartType}" -> "${corrected.partType}"`
+      );
+      finalPartType = corrected.partType;
+    }
+
+    console.log(
+      `After ACES correction: ${finalCategory} -> ${finalSubcategory} -> ${finalPartType}`
+    );
+
+    // Use analysis indicators for confidence adjustment
+    if (analysis?.indicators?.partType && analysis.indicators.confidence > 0) {
+      // If our analysis found a specific part type match, boost confidence
+      const indicatedPartType = analysis.indicators.partType;
+      console.log(
+        `Checking indicator match: "${indicatedPartType}" vs "${finalPartType}"`
+      );
+
+      if (
+        finalPartType === indicatedPartType ||
+        analysis.indicators.keywords.some((k) =>
+          finalPartType.toLowerCase().includes(k.toLowerCase())
+        )
+      ) {
+        console.log(`INDICATOR MATCH FOUND - boosting confidence`);
+        finalConfidence = Math.max(finalConfidence, 85);
+        validationReason += " + indicator match";
+      }
+    }
+
+    // Fallback to local categorizer only if we have very poor results
+    if (
+      !finalCategory ||
+      !finalSubcategory ||
+      !finalPartType ||
+      finalConfidence < 30
+    ) {
+      console.log(`USING LOCAL CATEGORIZER FALLBACK for: ${product.name}`);
+      console.log(
+        `Reason: Category=${!!finalCategory}, Subcategory=${!!finalSubcategory}, PartType=${!!finalPartType}, Confidence=${finalConfidence}`
+      );
 
       const localResult = suggestCategory(
         product.name || "",
@@ -785,41 +1476,84 @@ Respond with ONLY a JSON array - no explanatory text:
         product.originalCategory || ""
       );
 
+      console.log(`Local categorizer result:`, localResult);
+
       if (localResult && localResult.category) {
-        finalCategory = localResult.category;
-        finalSubcategory = localResult.subcategory;
-        finalPartType = localResult.partType;
-        finalConfidence = Math.max(30, localResult.confidence - 20); // Lower confidence for fallback
+        // Only use local result if AI result was very poor
+        if (finalConfidence < 30 || !finalCategory) {
+          console.log(`APPLYING LOCAL FALLBACK`);
+          console.log(
+            `  From: ${finalCategory} -> ${finalSubcategory} -> ${finalPartType}`
+          );
+
+          finalCategory = localResult.category;
+          finalSubcategory = localResult.subcategory;
+          finalPartType = localResult.partType;
+          finalConfidence = Math.max(35, localResult.confidence - 15); // Reduced confidence for fallback
+          validationReason = "Local categorizer fallback";
+
+          console.log(
+            `  To: ${finalCategory} -> ${finalSubcategory} -> ${finalPartType}`
+          );
+        }
       }
     }
 
-    // Apply keyword-based validation to catch obvious misclassifications
-    const keywordValidation = validateCategoryWithKeywords(
-      product,
-      finalCategory,
-      finalSubcategory
-    );
-
-    if (keywordValidation.shouldOverride) {
-      console.log(
-        `Overriding classification for "${product.name}": ${keywordValidation.reason}`
-      );
-      finalCategory = keywordValidation.overrideCategory;
-      finalSubcategory = keywordValidation.overrideSubcategory;
-      finalPartType =
-        acesCategories[finalCategory]?.[finalSubcategory]?.[0] || "";
-    }
-
-    // Final validation - ensure we have complete, valid ACES data
+    // Final safety validation - ensure we have at least category and subcategory
     if (!finalCategory || !acesCategories[finalCategory]) {
-      finalCategory = Object.keys(acesCategories)[0]; // Default to first category
+      console.warn(
+        `SAFETY FALLBACK: No valid category found for "${product.name}", defaulting to Tools & Equipment`
+      );
+      finalCategory = "Tools & Equipment"; // Safe default for unknown items
     }
-    if (!finalSubcategory || !acesCategories[finalCategory][finalSubcategory]) {
-      finalSubcategory = Object.keys(acesCategories[finalCategory])[0]; // Default to first subcategory
+
+    if (
+      !finalSubcategory ||
+      !acesCategories[finalCategory]?.[finalSubcategory]
+    ) {
+      console.warn(
+        `SAFETY FALLBACK: No valid subcategory found for "${product.name}", using first available`
+      );
+      finalSubcategory = Object.keys(acesCategories[finalCategory])[0];
     }
+
+    // Only force a part type if we don't have one at all
+    // Don't override a valid AI-suggested part type just because it's not in our ACES list
     if (!finalPartType) {
+      console.warn(
+        `SAFETY FALLBACK: No part type found for "${product.name}", using first available`
+      );
       finalPartType = acesCategories[finalCategory][finalSubcategory][0] || "";
+    } else if (
+      acesCategories[finalCategory]?.[finalSubcategory] &&
+      !acesCategories[finalCategory][finalSubcategory].includes(finalPartType)
+    ) {
+      // We have a part type but it's not in our ACES list - that's okay, keep it
+      console.log(
+        `Part type "${finalPartType}" not in ACES list but keeping AI suggestion`
+      );
     }
+
+    // Confidence adjustment based on completeness and validation
+    if (
+      validationReason.includes("override") ||
+      validationReason.includes("indicator")
+    ) {
+      finalConfidence = Math.max(finalConfidence, 80);
+    } else if (validationReason.includes("fallback")) {
+      finalConfidence = Math.min(finalConfidence, 50);
+    }
+
+    // DEBUG: Final result logging
+    console.log(`--- PRODUCT ${index + 1} - FINAL RESULT ---`);
+    console.log(`Product Name: "${product.name || "N/A"}"`);
+    console.log(`Final Classification:`);
+    console.log(`  Category: "${finalCategory}"`);
+    console.log(`  Subcategory: "${finalSubcategory}"`);
+    console.log(`  Part Type: "${finalPartType}"`);
+    console.log(`  Confidence: ${finalConfidence}%`);
+    console.log(`  Validation Reason: "${validationReason}"`);
+    console.log(`--- END PRODUCT ${index + 1} ---\n`);
 
     return {
       ...product,
@@ -827,6 +1561,8 @@ Respond with ONLY a JSON array - no explanatory text:
       suggestedSubcategory: finalSubcategory,
       suggestedPartType: finalPartType,
       confidence: finalConfidence,
+      validationReason, // For debugging and quality assessment
+      analysis: analysis?.indicators, // Include analysis data for further processing
     };
   });
 };

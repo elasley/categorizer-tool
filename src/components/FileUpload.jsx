@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { parseCSV, validateCSV, generateSampleCSV } from "../utils/csvParser";
 
-const FileUpload = ({ onFileUpload, isProcessing }) => {
+const FileUpload = ({ onFileUpload, isProcessing, onClearFile }) => {
   const [dragOver, setDragOver] = useState(false);
   const [fileInfo, setFileInfo] = useState(null);
   const [uploadStatus, setUploadStatus] = useState(null); // 'success', 'error', 'processing'
@@ -127,6 +127,9 @@ const FileUpload = ({ onFileUpload, isProcessing }) => {
     setValidationResults(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+    if (onClearFile) {
+      onClearFile();
     }
   };
 

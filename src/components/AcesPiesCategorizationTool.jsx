@@ -30,6 +30,7 @@ import {
   batchCategorize,
   getCategoryMappingStats,
 } from "../utils/categoryMatcher";
+
 import {
   batchCategorizeWithOpenAI,
   estimateOpenAICost,
@@ -39,6 +40,31 @@ import { acesCategories } from "../data/acesCategories";
 const AcesPiesCategorizationTool = () => {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState(acesCategories);
+
+  // Add custom subcategory or part type to categories state
+  const handleAddCustomCategory = ({
+    category,
+    subcategory,
+    partType,
+    type,
+  }) => {
+    setCategories((prev) => {
+      const updated = JSON.parse(JSON.stringify(prev));
+      if (type === "subcategory" && category && subcategory) {
+        if (!updated[category][subcategory]) {
+          updated[category][subcategory] = [];
+        }
+      } else if (type === "partType" && category && subcategory && partType) {
+        if (!updated[category][subcategory]) {
+          updated[category][subcategory] = [];
+        }
+        if (!updated[category][subcategory].includes(partType)) {
+          updated[category][subcategory].push(partType);
+        }
+      }
+      return updated;
+    });
+  };
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -317,7 +343,7 @@ const AcesPiesCategorizationTool = () => {
 
   const handleUpdateCategories = (updatedCategories) => {
     setCategories(updatedCategories);
-    localStorage.setItem("acesCategories", JSON.stringify(updatedCategories));
+    // No localStorage/sessionStorage persistence here; categories live in React state only
   };
 
   const handleBulkUpdateProducts = (updatedProducts) => {
@@ -458,7 +484,15 @@ const AcesPiesCategorizationTool = () => {
         </div>
       )}
 
-      <FileUpload onFileUpload={handleFileUpload} isProcessing={isProcessing} />
+      <FileUpload 
+        onFileUpload={handleFileUpload} 
+        isProcessing={isProcessing} 
+        onClearFile={() => {
+          setProducts([]);
+          setValidationResults(null);
+            
+        }}
+      />
 
       {products.length > 0 && (
         <>
@@ -723,6 +757,7 @@ const AcesPiesCategorizationTool = () => {
                         onFieldUpdate={handleFieldUpdate}
                         confidenceThreshold={confidenceThreshold}
                         categories={categories}
+                        onAddCustomCategory={handleAddCustomCategory}
                       />
                     );
                   })}

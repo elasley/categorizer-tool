@@ -416,7 +416,12 @@ const TaxonomyManager = ({
 
     if (editingNode.type === "category") {
       const oldName = pathParts[0];
-      if (oldName !== newNodeName && !updatedCategories[newNodeName]) {
+      // Defensive: only operate if the old category exists
+      if (
+        oldName !== newNodeName &&
+        updatedCategories[oldName] &&
+        !updatedCategories[newNodeName]
+      ) {
         updatedCategories[newNodeName] = updatedCategories[oldName];
         delete updatedCategories[oldName];
 
@@ -430,7 +435,10 @@ const TaxonomyManager = ({
       }
     } else if (editingNode.type === "subcategory") {
       const [category, oldSubcategory] = pathParts;
+      // Defensive: ensure category exists and old subcategory exists
       if (
+        updatedCategories[category] &&
+        updatedCategories[category][oldSubcategory] &&
         oldSubcategory !== newNodeName &&
         !updatedCategories[category][newNodeName]
       ) {
@@ -449,20 +457,26 @@ const TaxonomyManager = ({
       }
     } else if (editingNode.type === "partType") {
       const [category, subcategory, oldPartType] = pathParts;
-      const partTypes = updatedCategories[category][subcategory];
-      const index = partTypes.indexOf(oldPartType);
-      if (index !== -1 && !partTypes.includes(newNodeName)) {
-        partTypes[index] = newNodeName;
+      // Defensive: ensure category and subcategory exist and are arrays
+      if (
+        updatedCategories[category] &&
+        Array.isArray(updatedCategories[category][subcategory])
+      ) {
+        const partTypes = updatedCategories[category][subcategory];
+        const index = partTypes.indexOf(oldPartType);
+        if (index !== -1 && !partTypes.includes(newNodeName)) {
+          partTypes[index] = newNodeName;
 
-        // Update products
-        const updatedProducts = products.map((product) =>
-          product.suggestedCategory === category &&
-          product.suggestedSubcategory === subcategory &&
-          product.suggestedPartType === oldPartType
-            ? { ...product, suggestedPartType: newNodeName }
-            : product
-        );
-        onUpdateProducts(updatedProducts);
+          // Update products
+          const updatedProducts = products.map((product) =>
+            product.suggestedCategory === category &&
+            product.suggestedSubcategory === subcategory &&
+            product.suggestedPartType === oldPartType
+              ? { ...product, suggestedPartType: newNodeName }
+              : product
+          );
+          onUpdateProducts(updatedProducts);
+        }
       }
     }
 
@@ -495,11 +509,22 @@ const TaxonomyManager = ({
       }
     } else if (addDialogType === "subcategory") {
       const category = addDialogParent;
+      // Defensive: ensure category exists
+      if (!updatedCategories[category]) {
+        updatedCategories[category] = {};
+      }
       if (!updatedCategories[category][newNodeName]) {
         updatedCategories[category][newNodeName] = [];
       }
     } else if (addDialogType === "partType") {
       const [category, subcategory] = addDialogParent.split(" > ");
+      // Defensive: ensure structures exist
+      if (!updatedCategories[category]) {
+        updatedCategories[category] = {};
+      }
+      if (!Array.isArray(updatedCategories[category][subcategory])) {
+        updatedCategories[category][subcategory] = [];
+      }
       if (!updatedCategories[category][subcategory].includes(newNodeName)) {
         updatedCategories[category][subcategory].push(newNodeName);
       }
@@ -526,12 +551,20 @@ const TaxonomyManager = ({
     if (type === "category") {
       delete updatedCategories[pathParts[0]];
     } else if (type === "subcategory") {
-      delete updatedCategories[pathParts[0]][pathParts[1]];
+      if (updatedCategories[pathParts[0]]) {
+        delete updatedCategories[pathParts[0]][pathParts[1]];
+      }
     } else if (type === "partType") {
       const [category, subcategory, partType] = pathParts;
-      const index = updatedCategories[category][subcategory].indexOf(partType);
-      if (index !== -1) {
-        updatedCategories[category][subcategory].splice(index, 1);
+      if (
+        updatedCategories[category] &&
+        Array.isArray(updatedCategories[category][subcategory])
+      ) {
+        const index =
+          updatedCategories[category][subcategory].indexOf(partType);
+        if (index !== -1) {
+          updatedCategories[category][subcategory].splice(index, 1);
+        }
       }
     }
 

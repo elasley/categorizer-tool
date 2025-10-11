@@ -17,6 +17,7 @@ const ProductRow = ({
   onFieldUpdate,
   confidenceThreshold,
   categories,
+  onAddCustomCategory,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({});
@@ -161,8 +162,19 @@ const ProductRow = ({
       }));
       setShowCustomSubcategory(false);
       setCustomSubcategory("");
+      if (
+        onAddCustomCategory &&
+        editData.suggestedCategory &&
+        customSubcategory.trim()
+      ) {
+        onAddCustomCategory({
+          category: editData.suggestedCategory,
+          subcategory: customSubcategory.trim(),
+          type: "subcategory",
+        });
+      }
     }
-  }, [customSubcategory]);
+  }, [customSubcategory, onAddCustomCategory, editData.suggestedCategory]);
 
   const handleCustomPartTypeSubmit = useCallback(() => {
     if (customPartType.trim()) {
@@ -172,8 +184,26 @@ const ProductRow = ({
       }));
       setShowCustomPartType(false);
       setCustomPartType("");
+      if (
+        onAddCustomCategory &&
+        editData.suggestedCategory &&
+        editData.suggestedSubcategory &&
+        customPartType.trim()
+      ) {
+        onAddCustomCategory({
+          category: editData.suggestedCategory,
+          subcategory: editData.suggestedSubcategory,
+          partType: customPartType.trim(),
+          type: "partType",
+        });
+      }
     }
-  }, [customPartType]);
+  }, [
+    customPartType,
+    onAddCustomCategory,
+    editData.suggestedCategory,
+    editData.suggestedSubcategory,
+  ]);
 
   const truncateText = (text, maxLength = 100) => {
     if (!text) return "";
