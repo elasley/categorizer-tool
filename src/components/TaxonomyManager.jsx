@@ -549,23 +549,22 @@ const TaxonomyManager = ({
     const pathParts = path.split(" > ");
 
     if (type === "category") {
-      delete updatedCategories[pathParts[0]];
+        delete updatedCategories[pathParts[0]];
     } else if (type === "subcategory") {
-      if (updatedCategories[pathParts[0]]) {
-        delete updatedCategories[pathParts[0]][pathParts[1]];
-      }
+        if (updatedCategories[pathParts[0]]) {
+          delete updatedCategories[pathParts[0]][pathParts[1]];
+        }
     } else if (type === "partType") {
       const [category, subcategory, partType] = pathParts;
-      if (
-        updatedCategories[category] &&
-        Array.isArray(updatedCategories[category][subcategory])
-      ) {
-        const index =
-          updatedCategories[category][subcategory].indexOf(partType);
-        if (index !== -1) {
-          updatedCategories[category][subcategory].splice(index, 1);
+        if (
+          updatedCategories[category] &&
+          Array.isArray(updatedCategories[category][subcategory])
+        ) {
+          const index = updatedCategories[category][subcategory].indexOf(partType);
+          if (index !== -1) {
+            updatedCategories[category][subcategory].splice(index, 1);
+          }
         }
-      }
     }
 
     onUpdateCategories(updatedCategories);
@@ -635,10 +634,59 @@ const TaxonomyManager = ({
     a.click();
     window.URL.revokeObjectURL(url);
   };
+const exportProductsToCSV = (products, categories) => {
+  const csvRows = [];
+  const headers = [
+    "ID",
+    "Name",
+    "SuggestedCategory",
+    "SuggestedSubcategory",
+    "SuggestedPartType",
+    "Confidence",
+    "CategoryExists",
+    "SubcategoryExists",
+    "PartTypeExists"
+  ];
+  csvRows.push(headers.join(","));
+
+  products.forEach((p) => {
+    const categoryExists = !!categories[p.suggestedCategory];
+    const subcategoryExists =
+      categoryExists &&
+      !!categories[p.suggestedCategory][p.suggestedSubcategory];
+    const partTypeExists =
+      subcategoryExists &&
+      categories[p.suggestedCategory][p.suggestedSubcategory].includes(
+        p.suggestedPartType
+      );
+
+    const row = [
+      p.id,
+      `"${p.name || ""}"`,
+      `"${p.suggestedCategory || ""}"`,
+      `"${p.suggestedSubcategory || ""}"`,
+      `"${p.suggestedPartType || ""}"`,
+      p.confidence || "",
+      categoryExists,
+      subcategoryExists,
+      partTypeExists,
+    ];
+
+    csvRows.push(row.join(","));
+  });
+
+  const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `products-${new Date().toISOString().split("T")[0]}.csv`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+};
 
   // Export products as CSV (Excel compatible)
   const exportProductsCSV = () => {
-    exportProductsToCSV(products);
+    exportProductsToCSV(products,categories);
   };
 
   if (!isOpen) return null;
