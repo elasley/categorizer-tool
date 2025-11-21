@@ -45,6 +45,7 @@ const TaxonomyManager = ({
   const [addDialogParent, setAddDialogParent] = useState(null);
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState(new Set());
+  const [showOtherCategories, setShowOtherCategories] = useState(false);
 
   const otherTaxonomy = useMemo(() => {
     // Create a map of successfully categorized products
@@ -549,22 +550,23 @@ const TaxonomyManager = ({
     const pathParts = path.split(" > ");
 
     if (type === "category") {
-        delete updatedCategories[pathParts[0]];
+      delete updatedCategories[pathParts[0]];
     } else if (type === "subcategory") {
-        if (updatedCategories[pathParts[0]]) {
-          delete updatedCategories[pathParts[0]][pathParts[1]];
-        }
+      if (updatedCategories[pathParts[0]]) {
+        delete updatedCategories[pathParts[0]][pathParts[1]];
+      }
     } else if (type === "partType") {
       const [category, subcategory, partType] = pathParts;
-        if (
-          updatedCategories[category] &&
-          Array.isArray(updatedCategories[category][subcategory])
-        ) {
-          const index = updatedCategories[category][subcategory].indexOf(partType);
-          if (index !== -1) {
-            updatedCategories[category][subcategory].splice(index, 1);
-          }
+      if (
+        updatedCategories[category] &&
+        Array.isArray(updatedCategories[category][subcategory])
+      ) {
+        const index =
+          updatedCategories[category][subcategory].indexOf(partType);
+        if (index !== -1) {
+          updatedCategories[category][subcategory].splice(index, 1);
         }
+      }
     }
 
     onUpdateCategories(updatedCategories);
@@ -634,59 +636,69 @@ const TaxonomyManager = ({
     a.click();
     window.URL.revokeObjectURL(url);
   };
-const exportProductsToCSV = (products, categories) => {
-  const csvRows = [];
-  const headers = [
-    "ID",
-    "Name",
-    "SuggestedCategory",
-    "SuggestedSubcategory",
-    "SuggestedPartType",
-    "Confidence",
-    "CategoryExists",
-    "SubcategoryExists",
-    "PartTypeExists"
-  ];
-  csvRows.push(headers.join(","));
-
-  products.forEach((p) => {
-    const categoryExists = !!categories[p.suggestedCategory];
-    const subcategoryExists =
-      categoryExists &&
-      !!categories[p.suggestedCategory][p.suggestedSubcategory];
-    const partTypeExists =
-      subcategoryExists &&
-      categories[p.suggestedCategory][p.suggestedSubcategory].includes(
-        p.suggestedPartType
-      );
-
-    const row = [
-      p.id,
-      `"${p.name || ""}"`,
-      `"${p.suggestedCategory || ""}"`,
-      `"${p.suggestedSubcategory || ""}"`,
-      `"${p.suggestedPartType || ""}"`,
-      p.confidence || "",
-      categoryExists,
-      subcategoryExists,
-      partTypeExists,
+  const exportProductsToCSV = (products, categories) => {
+    const csvRows = [];
+    const headers = [
+      "ID",
+      "Name",
+      "SuggestedCategory",
+      "SuggestedSubcategory",
+      "SuggestedPartType",
+      "Confidence",
+      "CategoryExists",
+      "SubcategoryExists",
+      "PartTypeExists",
     ];
+    csvRows.push(headers.join(","));
 
-    csvRows.push(row.join(","));
-  });
+    products.forEach((p) => {
+      const categoryExists = !!categories[p.suggestedCategory];
+      const subcategoryExists =
+        categoryExists &&
+        !!categories[p.suggestedCategory][p.suggestedSubcategory];
+      const partTypeExists =
+        subcategoryExists &&
+        categories[p.suggestedCategory][p.suggestedSubcategory].includes(
+          p.suggestedPartType
+        );
 
-  const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `products-${new Date().toISOString().split("T")[0]}.csv`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-};
+      const row = [
+        p.id,
+        `"${p.name || ""}"`,
+        `"${p.suggestedCategory || ""}"`,
+        `"${p.suggestedSubcategory || ""}"`,
+        `"${p.suggestedPartType || ""}"`,
+        p.confidence || "",
+        categoryExists,
+        subcategoryExists,
+        partTypeExists,
+      ];
+
+      csvRows.push(row.join(","));
+    });
+
+    const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `products-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
 
   // Export products as CSV (Excel compatible)
   const exportProductsCSV = () => {
-    exportProductsToCSV(products,categories);
+    exportProductsToCSV(products, categories);
+  };
+
+  // Handler for AI enhancement (call this after AI enhancement/auto suggest)
+  const handleAIEnhancement = () => {
+    setShowOtherCategories(true);
+  };
+
+  // Toggle button for Other categories
+  const handleToggleOtherCategories = () => {
+    setShowOtherCategories((prev) => !prev);
   };
 
   if (!isOpen) return null;
@@ -797,6 +809,25 @@ const exportProductsToCSV = (products, categories) => {
                 <Users className="h-4 w-4" />
                 <span>{bulkEditMode ? "Exit Bulk Edit" : "Bulk Edit"}</span>
               </button>
+
+              {/* Toggle Other Categories */}
+              <button
+                onClick={handleToggleOtherCategories}
+                className={`px-3 py-2 text-sm rounded-lg flex items-center space-x-2 border ${
+                  showOtherCategories
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-100 text-gray-700"
+                }`}
+                title={
+                  showOtherCategories
+                    ? "Hide Other Categories"
+                    : "Show Other Categories"
+                }
+              >
+                {showOtherCategories
+                  ? "Hide Other Categories"
+                  : "Show Other Categories"}
+              </button>
             </div>
           </div>
         </div>
@@ -821,6 +852,7 @@ const exportProductsToCSV = (products, categories) => {
               onCancelEdit={cancelEdit}
               onDelete={deleteItem}
               onAddItem={showAddItemDialog}
+              showOtherCategories={showOtherCategories}
             />
           </div>
 
@@ -871,6 +903,7 @@ const TaxonomyTree = ({
   onCancelEdit,
   onDelete,
   onAddItem,
+  showOtherCategories,
 }) => {
   return (
     <div className="space-y-2">
@@ -896,50 +929,52 @@ const TaxonomyTree = ({
         />
       ))}
 
-      {/* Other Categories Section */}
-      {Object.keys(otherTaxonomy).filter(
-        (cat) => taxonomyStats.otherCategories[cat]?.total > 0
-      ).length > 0 && (
-        <div className="mt-6 border-t border-gray-200 pt-4">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
-            <FolderOpen className="h-5 w-5 text-blue-600 mr-2" />
-            Other Categories
-            <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
-              {
-                Object.keys(otherTaxonomy).filter(
-                  (cat) => taxonomyStats.otherCategories[cat]?.total > 0
-                ).length
-              }{" "}
-              categories with products
-            </span>
-          </h3>
-          {Object.entries(otherTaxonomy)
-            .filter(
-              ([category]) => taxonomyStats.otherCategories[category]?.total > 0
-            )
-            .map(([category, subcategories]) => (
-              <OtherCategoryNode
-                key={`other-${category}`}
-                category={category}
-                subcategories={subcategories}
-                expandedNodes={expandedNodes}
-                toggleExpanded={toggleExpanded}
-                stats={taxonomyStats.otherCategories[category]}
-                performance={taxonomyStats.otherPerformance[category]}
-                onNodeSelect={onNodeSelect}
-                selectedNode={selectedNode}
-                editingNode={editingNode}
-                newNodeName={newNodeName}
-                setNewNodeName={setNewNodeName}
-                onStartEdit={onStartEdit}
-                onSaveEdit={onSaveEdit}
-                onCancelEdit={onCancelEdit}
-                onDelete={onDelete}
-                onAddItem={onAddItem}
-              />
-            ))}
-        </div>
-      )}
+      {/* Other Categories Section - only show if toggle is enabled */}
+      {showOtherCategories &&
+        Object.keys(otherTaxonomy).filter(
+          (cat) => taxonomyStats.otherCategories[cat]?.total > 0
+        ).length > 0 && (
+          <div className="mt-6 border-t border-gray-200 pt-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
+              <FolderOpen className="h-5 w-5 text-blue-600 mr-2" />
+              Other Categories
+              <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
+                {
+                  Object.keys(otherTaxonomy).filter(
+                    (cat) => taxonomyStats.otherCategories[cat]?.total > 0
+                  ).length
+                }{" "}
+                categories with products
+              </span>
+            </h3>
+            {Object.entries(otherTaxonomy)
+              .filter(
+                ([category]) =>
+                  taxonomyStats.otherCategories[category]?.total > 0
+              )
+              .map(([category, subcategories]) => (
+                <OtherCategoryNode
+                  key={`other-${category}`}
+                  category={category}
+                  subcategories={subcategories}
+                  expandedNodes={expandedNodes}
+                  toggleExpanded={toggleExpanded}
+                  stats={taxonomyStats.otherCategories[category]}
+                  performance={taxonomyStats.otherPerformance[category]}
+                  onNodeSelect={onNodeSelect}
+                  selectedNode={selectedNode}
+                  editingNode={editingNode}
+                  newNodeName={newNodeName}
+                  setNewNodeName={setNewNodeName}
+                  onStartEdit={onStartEdit}
+                  onSaveEdit={onSaveEdit}
+                  onCancelEdit={onCancelEdit}
+                  onDelete={onDelete}
+                  onAddItem={onAddItem}
+                />
+              ))}
+          </div>
+        )}
     </div>
   );
 };
