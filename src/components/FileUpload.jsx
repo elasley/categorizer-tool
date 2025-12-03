@@ -10,21 +10,52 @@ import {
   HelpCircle,
   Download,
 } from "lucide-react";
-import { parseCSV, validateCSV, generateSampleCSV } from "../utils/csvParser";
+import {
+  parseCSV,
+  validateCSV,
+  generateSampleCSV,
+  parseCategoryCSV,
+  validateCategoryCSV,
+} from "../utils/csvParser";
 
-const FileUpload = ({ onFileUpload, isProcessing, onClearFile }) => {
+const FileUpload = ({
+  onFileUpload,
+  isProcessing,
+  onClearFile,
+  onClearCategories,
+  customCategoriesUploaded,
+  externalFileInfo,
+  externalValidationResults,
+  externalUploadType,
+}) => {
   const [dragOver, setDragOver] = useState(false);
   const [fileInfo, setFileInfo] = useState(null);
   const [uploadStatus, setUploadStatus] = useState(null); // 'success', 'error', 'processing'
   const [showHelp, setShowHelp] = useState(false);
   const [validationResults, setValidationResults] = useState(null);
+  const [uploadType, setUploadType] = useState("products"); // Always 'products' by default
   const fileInputRef = useRef(null);
+
+  // Keep uploadType as 'products' to always show the correct label
+  React.useEffect(() => {
+    setUploadType("products");
+  }, []);
+
+  // If the parent passes an external file info (e.g. parent uploaded file via another input), reflect it here
+  React.useEffect(() => {
+    if (externalFileInfo) {
+      setFileInfo(externalFileInfo);
+      setValidationResults(externalValidationResults || null);
+      setUploadStatus(externalFileInfo ? "success" : null);
+      if (externalUploadType) setUploadType(externalUploadType);
+    }
+  }, [externalFileInfo, externalValidationResults, externalUploadType]);
 
   // Handle file selection
   const handleFileChange = (event) => {
     const file = event.target.files[0];
     if (file) {
-      processFile(file);
+      processFile(file, uploadType);
     }
   };
 
@@ -45,11 +76,11 @@ const FileUpload = ({ onFileUpload, isProcessing, onClearFile }) => {
 
     const files = event.dataTransfer.files;
     if (files.length > 0) {
-      processFile(files[0]);
+      processFile(files[0], uploadType);
     }
   };
 
-  const processFile = async (file) => {
+  const processFile = async (file, type = "products") => {
     // Validate file type
     if (!file.name.toLowerCase().endsWith(".csv")) {
       setUploadStatus("error");
@@ -80,11 +111,19 @@ const FileUpload = ({ onFileUpload, isProcessing, onClearFile }) => {
     });
 
     try {
-      // Parse CSV file
-      const products = await parseCSV(file);
+      let parsedData;
+      let validation;
 
-      // Validate parsed data
-      const validation = validateCSV(products);
+      if (type === "categories") {
+        // Parse Category CSV
+        parsedData = await parseCategoryCSV(file);
+        validation = validateCategoryCSV(parsedData);
+      } else {
+        // Parse Product CSV
+        parsedData = await parseCSV(file);
+        validation = validateCSV(parsedData);
+      }
+
       setValidationResults(validation);
 
       if (!validation.isValid) {
@@ -98,10 +137,23 @@ const FileUpload = ({ onFileUpload, isProcessing, onClearFile }) => {
 
       setUploadStatus("success");
 
+      // Build a file info object to optionally hand back to parent
+      const fileInfoObj = {
+        name: file.name,
+        size: formatFileSize(file.size),
+        type: file.type || "text/csv",
+      };
+
       // Call parent handler with parsed data
       if (onFileUpload) {
-        onFileUpload(products, validation);
+        // pass a third argument indicating whether this upload is for products or categories
+        // pass a fourth argument with the filename
+        onFileUpload(parsedData, validation, type, file.name);
       }
+
+      // Update local state
+      setFileInfo(fileInfoObj);
+      setValidationResults(validation);
     } catch (error) {
       setUploadStatus("error");
       setFileInfo((prev) => ({
@@ -200,8 +252,13 @@ const FileUpload = ({ onFileUpload, isProcessing, onClearFile }) => {
                   <div className="font-medium text-gray-900">
                     {fileInfo.name}
                   </div>
-                  <div className="text-sm text-gray-500">
-                    {fileInfo.size} • {fileInfo.type}
+                  <div className="text-sm text-gray-500 flex items-center space-x-2">
+                    <span>
+                      {fileInfo.size} • {fileInfo.type}
+                    </span>
+                    <span className="ml-2 inline-block text-xs font-medium px-2 py-1 bg-gray-100 rounded-full text-gray-700">
+                      {uploadType === "products" ? "Products" : "Categories"}
+                    </span>
                   </div>
                 </div>
                 <button
@@ -297,22 +354,44 @@ const FileUpload = ({ onFileUpload, isProcessing, onClearFile }) => {
                 </p>
               </div>
 
-              {/* Upload Button */}
+              {/* Upload Buttons */}
               <div className="space-y-3">
-                <label className="cursor-pointer">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv"
-                    onChange={handleFileChange}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileChange}
+                  disabled={isProcessing}
+                  className="hidden"
+                />
+
+                <div className="inline-flex items-center justify-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadType("products");
+                      if (fileInputRef.current) fileInputRef.current.click();
+                    }}
+                    className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
                     disabled={isProcessing}
-                    className="hidden"
-                  />
-                  <div className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm">
+                  >
                     <Upload className="w-4 h-4 mr-2" />
-                    Choose CSV File
-                  </div>
-                </label>
+                    Upload Products
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadType("categories");
+                      if (fileInputRef.current) fileInputRef.current.click();
+                    }}
+                    className="inline-flex items-center px-4 py-3 border border-gray-300 bg-white text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+                    disabled={isProcessing}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload Categories
+                  </button>
+                </div>
 
                 <div className="text-sm text-gray-500">
                   or drag and drop your file here

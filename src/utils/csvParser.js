@@ -383,3 +383,145 @@ export const productCategories = () => {
   const { acesCategories } = require("../data/acesCategories");
   return acesCategories;
 };
+
+export const parseCategoryCSV = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const parsedData = parseCategoryCSVText(text);
+        resolve(parsedData);
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    reader.onerror = () => {
+      reject(new Error("Failed to read file"));
+    };
+
+    reader.readAsText(file);
+  });
+};
+
+export const parseCategoryCSVText = (csvText) => {
+  const delimiter = detectDelimiter(csvText);
+  const rows = [];
+  let currentRow = [];
+  let currentField = "";
+  let inQuotes = false;
+
+  const normalizedText = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  for (let i = 0; i < normalizedText.length; i++) {
+    const char = normalizedText[i];
+    const nextChar = normalizedText[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentField += '"';
+        i++;
+      } else if (!inQuotes) {
+        inQuotes = true;
+      } else {
+        inQuotes = false;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      currentRow.push(cleanField(currentField));
+      currentField = "";
+    } else if (char === "\n" && !inQuotes) {
+      currentRow.push(cleanField(currentField));
+      if (currentRow.some((field) => field.length > 0)) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentField = "";
+    } else {
+      currentField += char;
+    }
+  }
+
+  if (currentField || currentRow.length > 0) {
+    currentRow.push(cleanField(currentField));
+    if (currentRow.some((field) => field.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  if (rows.length === 0) {
+    throw new Error("No data found in CSV file");
+  }
+
+  return convertToCategories(rows);
+};
+
+const convertToCategories = (rows) => {
+  if (rows.length === 0) return {};
+
+  const headers = rows[0].map((header) => header.toLowerCase().trim());
+  
+  // Identify column indices
+  const categoryIdx = headers.findIndex(h => h.includes('category') && !h.includes('sub'));
+  const subcategoryIdx = headers.findIndex(h => h.includes('sub') || h.includes('secondary'));
+  const partTypeIdx = headers.findIndex(h => h.includes('part') || h.includes('type'));
+
+  if (categoryIdx === -1) {
+    throw new Error("Could not identify 'Category' column");
+  }
+
+  const categories = {};
+
+  rows.slice(1).forEach(row => {
+    const category = row[categoryIdx];
+    const subcategory = subcategoryIdx !== -1 ? row[subcategoryIdx] : null;
+    const partType = partTypeIdx !== -1 ? row[partTypeIdx] : null;
+
+    if (!category) return;
+
+    if (!categories[category]) {
+      categories[category] = {};
+    }
+
+    if (subcategory) {
+      if (!categories[category][subcategory]) {
+        categories[category][subcategory] = [];
+      }
+
+      if (partType && !categories[category][subcategory].includes(partType)) {
+        categories[category][subcategory].push(partType);
+      }
+    }
+  });
+
+  return categories;
+};
+
+export const validateCategoryCSV = (categories) => {
+  const validation = {
+    isValid: true,
+    warnings: [],
+    errors: [],
+    stats: {
+      totalCategories: Object.keys(categories).length,
+      totalSubcategories: 0,
+      totalPartTypes: 0
+    }
+  };
+
+  if (Object.keys(categories).length === 0) {
+    validation.isValid = false;
+    validation.errors.push("No categories found");
+    return validation;
+  }
+
+  Object.values(categories).forEach(subcats => {
+    validation.stats.totalSubcategories += Object.keys(subcats).length;
+    Object.values(subcats).forEach(partTypes => {
+      validation.stats.totalPartTypes += partTypes.length;
+    });
+  });
+
+  return validation;
+};

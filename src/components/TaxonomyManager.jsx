@@ -135,6 +135,8 @@ const TaxonomyManager = ({
     };
 
     Object.entries(categories).forEach(([category, subcategories]) => {
+      if (!subcategories || typeof subcategories !== 'object') return;
+
       stats.totalSubcategories += Object.keys(subcategories).length;
       stats.distribution[category] = {
         total: 0,
@@ -142,6 +144,8 @@ const TaxonomyManager = ({
       };
 
       Object.entries(subcategories).forEach(([subcategory, partTypes]) => {
+        if (!Array.isArray(partTypes)) return;
+
         stats.totalPartTypes += partTypes.length;
         stats.distribution[category].subcategories[subcategory] = {
           total: 0,
@@ -344,9 +348,13 @@ const TaxonomyManager = ({
         category.toLowerCase().includes(searchTerm.toLowerCase());
 
       if (shouldIncludeCategory && categoryMatchesSearch) {
+        if (!subcategories || typeof subcategories !== 'object') return;
+
         filtered[category] = {};
 
         Object.entries(subcategories).forEach(([subcategory, partTypes]) => {
+          if (!Array.isArray(partTypes)) return;
+
           const subcategoryMatchesSearch =
             !searchTerm ||
             subcategory.toLowerCase().includes(searchTerm.toLowerCase());

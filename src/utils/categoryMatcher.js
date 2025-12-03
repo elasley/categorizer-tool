@@ -811,7 +811,10 @@ const mapExistingCategory = (existingCategory) => {
 /**
  * Get category mapping statistics for analysis
  */
-export const getCategoryMappingStats = (products) => {
+export const getCategoryMappingStats = (
+  products,
+  categories = acesCategories
+) => {
   const stats = {
     totalProducts: products.length,
     mappedCategories: {},
@@ -864,8 +867,20 @@ export const suggestCategory = (
   description = "",
   brand = "",
   title = "",
-  existingCategory = ""
+  existingCategory = "",
+  categories = acesCategories
 ) => {
+  // Log which categories are being used
+  const isUsingCustomCategories = categories !== acesCategories;
+  if (isUsingCustomCategories) {
+    console.log(
+      "[suggestCategory] Using UPLOADED CATEGORIES",
+      Object.keys(categories)
+    );
+  } else {
+    console.log("[suggestCategory] Using DEFAULT ACES CATEGORIES");
+  }
+
   // Clean and normalize input text
   const cleanText = (str) =>
     str
@@ -912,7 +927,8 @@ export const suggestCategory = (
     const primaryMatch = findKeywordMatches(
       primaryText,
       cleanProductName,
-      cleanTitle
+      cleanTitle,
+      categories
     );
     if (primaryMatch && primaryMatch.confidence > 30) {
       results.push({
@@ -927,7 +943,8 @@ export const suggestCategory = (
   const fullTextMatch = findKeywordMatches(
     combinedText,
     cleanProductName,
-    cleanDescription
+    cleanDescription,
+    categories
   );
   if (fullTextMatch && fullTextMatch.confidence > 25) {
     results.push({
@@ -990,6 +1007,8 @@ export const suggestCategory = (
   };
 };
 
+// Modified helper functions to accept a categories parameter where needed
+
 /**
  * Check brand-specific rules
  */
@@ -1029,21 +1048,28 @@ const checkBrandRules = (text, brand) => {
 /**
  * Enhanced keyword matching with better context analysis
  */
-const findKeywordMatches = (text, productName = "", description = "") => {
+const findKeywordMatches = (
+  text,
+  productName = "",
+  description = "",
+  categories = acesCategories
+) => {
   const words = text.split(/\s+/).filter((w) => w.length > 2);
   let bestMatch = null;
   let bestScore = 0;
   let allMatches = [];
-
-  Object.entries(acesCategories).forEach(([category, subcategories]) => {
+  Object.entries(categories).forEach(([category, subcategories]) => {
+    if (!subcategories || typeof subcategories !== "object") return;
     Object.entries(subcategories).forEach(([subcategory, partTypes]) => {
+      if (!Array.isArray(partTypes)) return;
       partTypes.forEach((partType) => {
         const score = calculateScore(
           partType,
           words,
           text,
           productName,
-          description
+          description,
+          categories
         );
 
         if (score > 25) {
@@ -1237,7 +1263,8 @@ const calculateScore = (
   words,
   fullText,
   productName = "",
-  description = ""
+  description = "",
+  categories = acesCategories
 ) => {
   const partWords = partType.toLowerCase().split(/\s+/);
   const allText = `${fullText} ${productName} ${description}`.toLowerCase();
@@ -1338,7 +1365,24 @@ const handleUnmappedCategory = (existingCategory) => {
 /**
  * Enhanced batch processing with category mapping and unmapped category handling
  */
-export const batchCategorize = async (products, onProgress) => {
+export const batchCategorize = async (
+  products,
+  onProgress,
+  categories = acesCategories
+) => {
+  const isUsingCustomCategories = categories !== acesCategories;
+  console.log("[batchCategorize] Starting categorization");
+  console.log(
+    `[batchCategorize] Using ${
+      isUsingCustomCategories ? "UPLOADED" : "DEFAULT ACES"
+    } categories`
+  );
+  console.log(
+    `[batchCategorize] Available categories: ${Object.keys(categories).join(
+      ", "
+    )}`
+  );
+
   const results = [];
   const batchSize = 100;
 
@@ -1357,7 +1401,8 @@ export const batchCategorize = async (products, onProgress) => {
         description,
         brand,
         title,
-        existingCategory
+        existingCategory,
+        categories
       );
 
       // If no suggestion found but we have an existing category, map it to "Other"

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import {
   Search,
   Download,
@@ -10,12 +10,18 @@ import {
   DollarSign,
   BarChart3,
   Users,
+  ChevronDown,
+  ChevronRight,
   Target,
   RefreshCw,
   Filter,
   Eye,
   TrendingUp,
   Brain,
+  X,
+  FolderOpen,
+  Folder,
+  Tag,
 } from "lucide-react";
 
 import FileUpload from "./FileUpload";
@@ -30,6 +36,7 @@ import {
   batchCategorize,
   getCategoryMappingStats,
 } from "../utils/categoryMatcher";
+import { parseCategoryCSV, validateCategoryCSV } from "../utils/csvParser";
 
 import {
   batchCategorizeWithOpenAI,
@@ -40,6 +47,39 @@ import { acesCategories } from "../data/acesCategories";
 const AcesPiesCategorizationTool = () => {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState(acesCategories);
+  const [customCategoriesUploaded, setCustomCategoriesUploaded] =
+    useState(false);
+  const [activeCategories, setActiveCategories] = useState("aces"); // 'aces' or 'user'
+  const [userCategories, setUserCategories] = useState(null);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const productFileInputRef = useRef(null);
+  // Track expanded categories/subcategories in the Category modal
+  const [expanded, setExpanded] = useState({});
+  const toggleExpand = (key) =>
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  const isExpanded = (key) => !!expanded[key];
+  const [allExpanded, setAllExpanded] = useState(false);
+  const expandAll = () => {
+    const map = {};
+    Object.entries(categories).forEach(([cat, subcats]) => {
+      map[cat] = true;
+      if (subcats && typeof subcats === "object") {
+        Object.keys(subcats).forEach((sub) => {
+          map[`${cat}||${sub}`] = true;
+        });
+      }
+    });
+    setExpanded(map);
+    setAllExpanded(true);
+  };
+  const collapseAll = () => {
+    setExpanded({});
+    setAllExpanded(false);
+  };
+  const toggleAll = () => {
+    if (allExpanded) collapseAll();
+    else expandAll();
+  };
 
   // Add custom subcategory or part type to categories state
   const handleAddCustomCategory = ({
@@ -72,6 +112,8 @@ const AcesPiesCategorizationTool = () => {
   const [isPreparingAI, setIsPreparingAI] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [validationResults, setValidationResults] = useState(null);
+  const [lastUploadedFileInfo, setLastUploadedFileInfo] = useState(null);
+  const [lastUploadType, setLastUploadType] = useState(null);
 
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showTaxonomyManager, setShowTaxonomyManager] = useState(false);
@@ -98,16 +140,70 @@ const AcesPiesCategorizationTool = () => {
     }
   }, [products.length, useOpenAI]);
 
+  // Reset expansion when modal opens or when categories change
+  React.useEffect(() => {
+    if (showCategoryModal) {
+      setExpanded({});
+      setAllExpanded(false);
+    }
+  }, [showCategoryModal, categories]);
+
   // Handle file upload with validation
-  const handleFileUpload = async (parsedProducts, validation) => {
-    if (!parsedProducts || parsedProducts.length === 0) {
-      alert("No valid products found in the uploaded file");
+  const handleFileUpload = async (parsedData, validation, type, filename) => {
+    console.log(`[Upload] Type: ${type}, File: ${filename}`);
+    console.log(`[Upload] Content Summary:`, parsedData);
+
+    if (type === "categories") {
+      if (!parsedData || Object.keys(parsedData).length === 0) {
+        return;
+      }
+      setUserCategories(parsedData);
+      setCategories(parsedData);
+      setCustomCategoriesUploaded(true);
+      setActiveCategories("user");
+      setValidationResults(validation);
+      setLastUploadedFileInfo({ name: filename, type: "text/csv" });
+      setLastUploadType("categories");
+    } else {
+      if (!parsedData || parsedData.length === 0) {
+        return;
+      }
+
+      setProducts(parsedData);
+      setValidationResults(validation);
+      setCurrentPage(1);
+      setLastUploadedFileInfo({ name: filename, type: "text/csv" });
+      setLastUploadType("products");
+    }
+  };
+
+  // Handle direct CSV file upload for products
+  const handleDirectProductUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".csv") && file.type !== "text/csv") {
       return;
     }
 
-    setProducts(parsedProducts);
-    setValidationResults(validation);
-    setCurrentPage(1);
+    try {
+      // Pass the File object directly to parseCSV, which handles it properly
+      const parsed = await parseCSV(file);
+      const validation = validateCSV(parsed);
+      // Use existing handler to set products and validation
+      handleFileUpload(parsed, validation, "products", file.name);
+      setLastUploadedFileInfo({
+        name: file.name,
+        size: file.size,
+        type: file.type || "text/csv",
+      });
+      setLastUploadType("products");
+      // Clear file input for next upload
+      if (productFileInputRef.current) {
+        productFileInputRef.current.value = "";
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const autoSuggestAll = async () => {
@@ -115,6 +211,12 @@ const AcesPiesCategorizationTool = () => {
       alert("Please upload products first");
       return;
     }
+
+    console.log(
+      "Categorizing with:",
+      activeCategories === "user" ? "User Categories" : "ACES Categories"
+    );
+    console.log("Current categories:", categories);
 
     if (useOpenAI) {
       return handleOpenAICategorization();
@@ -159,7 +261,8 @@ const AcesPiesCategorizationTool = () => {
             currentBatch,
             totalBatches,
           });
-        }
+        },
+        categories
       );
 
       // batchCategorizeWithOpenAI now returns { results, stats } when using AI
@@ -242,7 +345,8 @@ const AcesPiesCategorizationTool = () => {
             currentBatch: 0,
             totalBatches: 0,
           });
-        }
+        },
+        categories
       );
 
       // Log products that are not categorized or have low confidence
@@ -458,6 +562,55 @@ const AcesPiesCategorizationTool = () => {
             )}
           </div>
         )}
+        {customCategoriesUploaded && (
+          <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 flex items-center justify-between">
+            <div className="flex items-center gap-3 flex-1">
+              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              <span>User Category Tree Uploaded</span>
+              <div className="flex items-center gap-2 ml-4">
+                <label className="text-xs font-medium">Active Tree:</label>
+                <select
+                  value={activeCategories}
+                  onChange={(e) => {
+                    if (e.target.value === "aces") {
+                      setCategories(acesCategories);
+                      setActiveCategories("aces");
+                    } else if (e.target.value === "user" && userCategories) {
+                      setCategories(userCategories);
+                      setActiveCategories("user");
+                    }
+                  }}
+                  className="px-2 py-1 text-xs border border-blue-300 rounded bg-white text-gray-700"
+                >
+                  <option value="aces">ACES Categories</option>
+                  <option value="user">User Categories</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-x-3">
+              <button
+                onClick={() => setShowCategoryModal(true)}
+                className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md text-sm"
+              >
+                View Categories
+              </button>
+
+              <input
+                ref={productFileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleDirectProductUpload}
+                className="hidden"
+              />
+              <button
+                onClick={() => productFileInputRef.current?.click()}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm hover:shadow-md text-sm"
+              >
+                Upload Products
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {apiError && (
@@ -491,8 +644,17 @@ const AcesPiesCategorizationTool = () => {
           setProducts([]);
           setValidationResults(null);
           setCurrentPage(1);
-          setCategories(acesCategories);
         }}
+        onClearCategories={() => {
+          setCategories(acesCategories);
+          setUserCategories(null);
+          setCustomCategoriesUploaded(false);
+          setActiveCategories("aces");
+        }}
+        customCategoriesUploaded={customCategoriesUploaded}
+        externalFileInfo={lastUploadedFileInfo}
+        externalValidationResults={validationResults}
+        externalUploadType={lastUploadType}
       />
 
       {products.length > 0 && (
@@ -609,8 +771,12 @@ const AcesPiesCategorizationTool = () => {
                     ? `Processing Batch ${processingProgress.currentBatch}/${processingProgress.totalBatches}...`
                     : `Processing... ${processingProgress.current}/${processingProgress.total}`
                   : useOpenAI
-                  ? "AI-Enhance Categories"
-                  : "Auto-Suggest Categories"}
+                  ? `AI-Enhance (${
+                      activeCategories === "user" ? "User" : "ACES"
+                    })`
+                  : `Auto-Suggest (${
+                      activeCategories === "user" ? "User" : "ACES"
+                    })`}
               </button>
 
               <button
@@ -622,33 +788,32 @@ const AcesPiesCategorizationTool = () => {
                 Export Results
               </button>
 
-              <div className="flex items-center space-x-3">
-                <button
-                  onClick={() => setShowTaxonomyManager(true)}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm"
-                >
-                  <BarChart3 className="w-4 h-4" />
-                  Taxonomy Manager
-                </button>
+              <button
+                onClick={() => setShowTaxonomyManager(true)}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm"
+              >
+                <BarChart3 className="w-4 h-4" />
+                Taxonomy Manager
+              </button>
 
-                <button
-                  onClick={() => setShowBulkAssignmentTool(true)}
-                  className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2 shadow-sm"
-                >
-                  <Users className="w-4 h-4" />
-                  Bulk Assignment
-                </button>
+              <button
+                onClick={() => setShowBulkAssignmentTool(true)}
+                className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2 shadow-sm"
+              >
+                <Users className="w-4 h-4" />
+                Bulk Assignment
+              </button>
 
-                {stats.problematic > 0 && (
-                  <button
-                    onClick={openBulkAssignmentForProblematic}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 shadow-sm animate-pulse"
-                  >
-                    <AlertTriangle className="w-4 h-4" />
-                    Fix Issues ({stats.problematic})
-                  </button>
-                )}
-              </div>
+              {stats.problematic > 0 && (
+                <button
+                  onClick={openBulkAssignmentForProblematic}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 shadow-sm animate-pulse"
+                >
+                  <AlertTriangle className="w-4 h-4" />
+                  Fix Issues ({stats.problematic})
+                </button>
+              )}
+              {/* </div> */}
 
               <button
                 onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
@@ -712,7 +877,8 @@ const AcesPiesCategorizationTool = () => {
                       Product Info
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-48">
-                      ACES Category
+                      Category{" "}
+                      {activeCategories === "user" ? "(User)" : "(ACES)"}
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-48">
                       Subcategory
@@ -798,39 +964,35 @@ const AcesPiesCategorizationTool = () => {
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
               <div>
-                <span className="text-gray-600">Total Products:</span>
-                <span className="ml-2 font-semibold">
-                  {stats.total.toLocaleString()}
-                </span>
+                <div className="text-gray-500">Total Products</div>
+                <div className="font-medium text-gray-900">{stats.total}</div>
               </div>
               <div>
-                <span className="text-gray-600">Categorized:</span>
-                <span className="ml-2 font-semibold text-green-600">
+                <div className="text-gray-500">Categorized</div>
+                <div className="font-medium text-gray-900">
                   {stats.categorized} (
                   {((stats.categorized / stats.total) * 100).toFixed(1)}%)
-                </span>
+                </div>
               </div>
               <div>
-                <span className="text-gray-600">High Confidence:</span>
-                <span className="ml-2 font-semibold text-blue-600">
-                  {stats.highConfidence} (
-                  {((stats.highConfidence / stats.total) * 100).toFixed(1)}%)
-                </span>
+                <div className="text-gray-500">High Confidence</div>
+                <div className="font-medium text-green-600">
+                  {stats.highConfidence}
+                </div>
               </div>
               <div>
-                <span className="text-gray-600">Needs Review:</span>
-                <span className="ml-2 font-semibold text-yellow-600">
+                <div className="text-gray-500">Needs Review</div>
+                <div className="font-medium text-amber-600">
                   {stats.needsReview}
-                </span>
+                </div>
               </div>
               <div>
-                <span className="text-gray-600">Avg Confidence:</span>
-                <span className="ml-2 font-semibold">
+                <div className="text-gray-500">Avg Confidence</div>
+                <div className="font-medium text-blue-600">
                   {stats.avgConfidence}%
-                </span>
+                </div>
               </div>
             </div>
-
             {stats.problematic > 0 && (
               <div className="mt-3 p-3 bg-amber-100 border border-amber-200 rounded-lg">
                 <div className="flex items-center space-x-2 text-amber-800">
@@ -851,6 +1013,7 @@ const AcesPiesCategorizationTool = () => {
         </>
       )}
 
+      {/* Empty State */}
       {products.length === 0 && !isProcessing && (
         <div className="text-center py-12">
           <BarChart3 className="h-16 w-16 text-gray-300 mx-auto mb-4" />
@@ -866,6 +1029,112 @@ const AcesPiesCategorizationTool = () => {
             <div>✅ AI-enhanced accuracy with OpenAI integration</div>
             <div>✅ Advanced taxonomy management and bulk operations</div>
             <div>✅ Professional-grade data quality tools</div>
+          </div>
+        </div>
+      )}
+
+      {/* Category View Modal */}
+      {showCategoryModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-gray-900">
+                Uploaded Category Tree
+              </h2>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={toggleAll}
+                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  {allExpanded ? "Collapse All" : "Expand All"}
+                </button>
+                <button
+                  onClick={() => setShowCategoryModal(false)}
+                  className="text-gray-400 hover:text-gray-500"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <div className="space-y-4">
+                {Object.entries(categories).map(([category, subcats]) => {
+                  if (!subcats || typeof subcats !== "object") return null;
+                  const catKey = category;
+                  return (
+                    <div key={category} className="">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center">
+                          <button
+                            onClick={() => toggleExpand(catKey)}
+                            className="mr-3 text-gray-500 hover:text-gray-700 focus:outline-none"
+                            aria-expanded={isExpanded(catKey)}
+                          >
+                            {isExpanded(catKey) ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </button>
+                          <h3 className="font-bold flex gap-2 items-center text-lg text-gray-800">
+                            <FolderOpen className="inline-block text-blue-500 h-4 w-4" />
+                            {category}
+                          </h3>
+                        </div>
+                      </div>
+
+                      {isExpanded(catKey) && (
+                        <div className="pl-4 border-l-2 border-gray-100 space-y-3">
+                          {Object.entries(subcats).map(
+                            ([subcategory, partTypes]) => {
+                              if (!Array.isArray(partTypes)) return null;
+                              const subKey = `${catKey}||${subcategory}`;
+                              return (
+                                <div key={subcategory}>
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center">
+                                      <button
+                                        onClick={() => toggleExpand(subKey)}
+                                        className="mr-2 text-gray-500 hover:text-gray-700 focus:outline-none"
+                                        aria-expanded={isExpanded(subKey)}
+                                      >
+                                        {isExpanded(subKey) ? (
+                                          <ChevronDown className="h-3 w-3" />
+                                        ) : (
+                                          <ChevronRight className="h-3 w-3" />
+                                        )}
+                                      </button>
+                                      <h4 className="font-medium flex gap-2 items-center text-gray-700">
+                                        <FolderOpen className=" text-green-500 h-4 w-4" />
+                                        {subcategory}
+                                      </h4>
+                                    </div>
+                                  </div>
+
+                                  {isExpanded(subKey) && (
+                                    <div className="pl-4 mt-2 space-y-1">
+                                      {partTypes.map((pt) => (
+                                        <div
+                                          key={pt}
+                                          className="text-gray-600 text-sm flex items-center gap-2 py-1 px-2 "
+                                        >
+                                          <Tag className=" text-yellow-500 h-3 w-3" />
+                                          {pt}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
       )}

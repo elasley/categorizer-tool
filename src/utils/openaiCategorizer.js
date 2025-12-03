@@ -715,7 +715,24 @@ const validateCategoryWithKeywords = (
 };
 
 // Main batch processing function with senior-level architecture
-export const batchCategorizeWithOpenAI = async (products, progressCallback) => {
+export const batchCategorizeWithOpenAI = async (
+  products,
+  progressCallback,
+  categories = acesCategories
+) => {
+  const isUsingCustomCategories = categories !== acesCategories;
+  console.log("[batchCategorizeWithOpenAI] Starting AI categorization");
+  console.log(
+    `[batchCategorizeWithOpenAI] Using ${
+      isUsingCustomCategories ? "UPLOADED" : "DEFAULT ACES"
+    } categories`
+  );
+  console.log(
+    `[batchCategorizeWithOpenAI] Available categories: ${Object.keys(
+      categories
+    ).join(", ")}`
+  );
+
   const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
 
   if (!apiKey) {
@@ -741,7 +758,8 @@ export const batchCategorizeWithOpenAI = async (products, progressCallback) => {
       product.description || "",
       product.brand || "",
       product.title || "",
-      product.originalCategory || product.category || ""
+      product.originalCategory || product.category || "",
+      categories
     );
     return { product, suggestion };
   });
@@ -799,7 +817,8 @@ export const batchCategorizeWithOpenAI = async (products, progressCallback) => {
         batch,
         batchIdx,
         apiKey,
-        progressCallback
+        progressCallback,
+        categories
       );
       if (aiResults && Array.isArray(aiResults)) stats.retries += 0; // placeholder for extension
       return { batchIdx, aiResults };
@@ -868,13 +887,14 @@ const processBatchWithRetry = async (
   batch,
   batchIndex,
   apiKey,
-  progressCallback
+  progressCallback,
+  categories = acesCategories
 ) => {
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const results = await processSingleBatch(batch, apiKey);
+      const results = await processSingleBatch(batch, apiKey, categories);
 
       if (!Array.isArray(results)) {
         throw new Error("Invalid response from processSingleBatch");
@@ -930,8 +950,16 @@ const processBatchWithRetry = async (
   }));
 };
 
-const processSingleBatch = async (batch, apiKey) => {
-  console.log(`\n=== PROCESSING BATCH OF ${batch.length} PRODUCTS ===`);
+const processSingleBatch = async (
+  batch,
+  apiKey,
+  categories = acesCategories
+) => {
+  console.log(
+    `[processSingleBatch] Using ${
+      categories !== acesCategories ? "UPLOADED" : "DEFAULT ACES"
+    } categories`
+  );
 
   // Analyze each product with professional automotive expertise
   const analyzedProducts = batch.map((product, index) => {
@@ -1473,7 +1501,8 @@ Provide professional-grade classifications with JSON array only:`;
         product.description || "",
         product.brand || "",
         product.title || "",
-        product.originalCategory || ""
+        product.originalCategory || "",
+        categories
       );
 
       console.log(`Local categorizer result:`, localResult);
