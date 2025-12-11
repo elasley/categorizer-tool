@@ -11,6 +11,10 @@ import {
   Tag,
   FileText,
   Users,
+  network,
+  Layers,
+  Box,
+  Network,
 } from "lucide-react";
 
 const DashboardSidebar = ({ isOpen, onClose }) => {
@@ -25,7 +29,6 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
           path: "/dashboard/categorize",
         },
         // { icon: FileText, label: "My Products", path: "/dashboard/export" },
-
       ],
     },
     {
@@ -38,7 +41,18 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
     {
       title: "Management",
       items: [
-        { icon: Tag, label: "Categories", path: "/dashboard/categories" },
+        {
+          icon: Network,
+          label: "Categories Tree",
+          path: "/dashboard/categories",
+        },
+        { icon: Tag, label: "Categories", path: "/dashboard/categories-list" },
+        {
+          icon: Layers,
+          label: "Subcategories",
+          path: "/dashboard/subcategories",
+        },
+        { icon: Box, label: "Part Types", path: "/dashboard/parttypes" },
         { icon: FolderOpen, label: "Products", path: "/dashboard/products" },
       ],
     },

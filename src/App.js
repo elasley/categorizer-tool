@@ -16,6 +16,9 @@ import DashboardHome from "./pages/dashboard/DashboardHome";
 import Settings from "./pages/dashboard/Settings";
 import Profile from "./pages/dashboard/Profile";
 import Categories from "./pages/dashboard/Categories";
+import CategoriesPage from "./pages/dashboard/CategoriesPage";
+import SubcategoriesPage from "./pages/dashboard/SubcategoriesPage";
+import ParttypesPage from "./pages/dashboard/ParttypesPage";
 import PrivateRoute from "./components/PrivateRoute";
 import LoadingSpinner from "./components/LoadingSpinner";
 
@@ -118,6 +121,9 @@ function App() {
                 }
               />
               <Route path="categories" element={<Categories />} />
+              <Route path="categories-list" element={<CategoriesPage />} />
+              <Route path="subcategories" element={<SubcategoriesPage />} />
+              <Route path="parttypes" element={<ParttypesPage />} />
               <Route
                 path="export"
                 element={

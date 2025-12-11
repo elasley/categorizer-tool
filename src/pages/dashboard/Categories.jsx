@@ -35,6 +35,9 @@ const Categories = () => {
     subcategories: 0,
     partTypes: 0,
   });
+  const [displayCount, setDisplayCount] = useState(20);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const observerTarget = React.useRef(null);
 
   // Modal state for adding new category, subcategory, or part type
   const [showAddModal, setShowAddModal] = useState(false);
@@ -45,8 +48,16 @@ const Categories = () => {
   const [adding, setAdding] = useState(false);
   const [parentCategoryId, setParentCategoryId] = useState(null);
   const [parentSubcategoryId, setParentSubcategoryId] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteItem, setDeleteItem] = useState(null);
+  const [deleteType, setDeleteType] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
-  const handleOpenAddModal = (type, categoryId = null, subcategoryId = null) => {
+  const handleOpenAddModal = (
+    type,
+    categoryId = null,
+    subcategoryId = null
+  ) => {
     setAddType(type);
     setShowAddModal(true);
     setNewCategory("");
@@ -102,9 +113,10 @@ const Categories = () => {
           setAdding(false);
           return;
         }
-        const { error } = await supabase
-          .from("subcategories")
-          .insert({ name: newSubcategory.trim(), category_id: parentCategoryId });
+        const { error } = await supabase.from("subcategories").insert({
+          name: newSubcategory.trim(),
+          category_id: parentCategoryId,
+        });
         if (error) throw error;
         toast.success("Subcategory added");
       } else if (addType === "parttype") {
@@ -113,9 +125,10 @@ const Categories = () => {
           setAdding(false);
           return;
         }
-        const { error } = await supabase
-          .from("parttypes")
-          .insert({ name: newPartType.trim(), subcategory_id: parentSubcategoryId });
+        const { error } = await supabase.from("parttypes").insert({
+          name: newPartType.trim(),
+          subcategory_id: parentSubcategoryId,
+        });
         if (error) throw error;
         toast.success("Part type added");
       }
@@ -131,6 +144,31 @@ const Categories = () => {
   useEffect(() => {
     loadAllData();
   }, []);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && displayCount < categories.length) {
+          setLoadingMore(true);
+          setTimeout(() => {
+            setDisplayCount((prev) => prev + 20);
+            setLoadingMore(false);
+          }, 500);
+        }
+      },
+      { threshold: 1.0 }
+    );
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
+    }
+
+    return () => {
+      if (observerTarget.current) {
+        observer.unobserve(observerTarget.current);
+      }
+    };
+  }, [displayCount, categories.length]);
 
   const loadAllData = async () => {
     setLoading(true);
@@ -219,42 +257,43 @@ const Categories = () => {
   };
 
   // Delete handlers
-  const handleDelete = async (item, type) => {
+  const handleDeleteClick = (item, type) => {
+    setDeleteItem(item);
+    setDeleteType(type);
+    setShowDeleteModal(true);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteItem || !deleteType) return;
+
+    setDeleting(true);
+    const loadingToast = toast.loading("Deleting...");
+
     const tableName =
-      type === "category"
+      deleteType === "category"
         ? "categories"
-        : type === "subcategory"
+        : deleteType === "subcategory"
         ? "subcategories"
         : "parttypes";
-
-    const confirmMessage =
-      type === "category"
-        ? "This will also delete all subcategories and part types under this category."
-        : type === "subcategory"
-        ? "This will also delete all part types under this subcategory."
-        : "This part type will be deleted.";
-
-    if (
-      !window.confirm(
-        `Are you sure you want to delete "${item.name}"?\n\n${confirmMessage}`
-      )
-    ) {
-      return;
-    }
 
     try {
       const { error } = await supabase
         .from(tableName)
         .delete()
-        .eq("id", item.id);
+        .eq("id", deleteItem.id);
 
       if (error) throw error;
 
-      toast.success(`${type} deleted successfully`);
+      toast.success(`${deleteType} deleted successfully`, { id: loadingToast });
+      setShowDeleteModal(false);
+      setDeleteItem(null);
+      setDeleteType("");
       loadAllData();
     } catch (error) {
       console.error("Error deleting:", error);
-      toast.error("Failed to delete");
+      toast.error("Failed to delete", { id: loadingToast });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -315,39 +354,85 @@ const Categories = () => {
         {/* Stats Cards */}
         <div className="p-6 border-b border-gray-200">
           <div className="grid grid-cols-3 gap-4">
-            <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-              <div className="text-sm text-blue-600 font-medium mb-1">
-                Categories
-              </div>
-              <div className="text-2xl font-bold text-blue-900">
-                {stats.categories}
-              </div>
-            </div>
-            <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
-              <div className="text-sm text-purple-600 font-medium mb-1">
-                Subcategories
-              </div>
-              <div className="text-2xl font-bold text-purple-900">
-                {stats.subcategories}
-              </div>
-            </div>
-            <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
-              <div className="text-sm text-orange-600 font-medium mb-1">
-                Part Types
-              </div>
-              <div className="text-2xl font-bold text-orange-900">
-                {stats.partTypes}
-              </div>
-            </div>
+            {loading ? (
+              // Skeleton loaders for stats
+              <>
+                <div className="bg-blue-50 rounded-lg p-4 border border-blue-200 animate-pulse">
+                  <div className="h-4 bg-blue-200 rounded w-20 mb-2"></div>
+                  <div className="h-8 bg-blue-200 rounded w-12"></div>
+                </div>
+                <div className="bg-purple-50 rounded-lg p-4 border border-purple-200 animate-pulse">
+                  <div className="h-4 bg-purple-200 rounded w-24 mb-2"></div>
+                  <div className="h-8 bg-purple-200 rounded w-12"></div>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-4 border border-orange-200 animate-pulse">
+                  <div className="h-4 bg-orange-200 rounded w-20 mb-2"></div>
+                  <div className="h-8 bg-orange-200 rounded w-12"></div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                  <div className="text-sm text-blue-600 font-medium mb-1">
+                    Categories
+                  </div>
+                  <div className="text-2xl font-bold text-blue-900">
+                    {stats.categories}
+                  </div>
+                </div>
+                <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+                  <div className="text-sm text-purple-600 font-medium mb-1">
+                    Subcategories
+                  </div>
+                  <div className="text-2xl font-bold text-purple-900">
+                    {stats.subcategories}
+                  </div>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+                  <div className="text-sm text-orange-600 font-medium mb-1">
+                    Part Types
+                  </div>
+                  <div className="text-2xl font-bold text-orange-900">
+                    {stats.partTypes}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
         {/* Content */}
         <div className="p-6">
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <LoadingSpinner size="lg" text="Loading data..." />
-            </div>
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <div className="h-6 bg-gray-200 rounded w-32 animate-pulse"></div>
+                <div className="flex gap-2">
+                  <div className="h-10 bg-gray-200 rounded w-28 animate-pulse"></div>
+                  <div className="h-10 bg-blue-200 rounded w-32 animate-pulse"></div>
+                </div>
+              </div>
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="p-4 space-y-2">
+                  {/* Skeleton Category Items */}
+                  {Array.from({ length: 5 }).map((_, idx) => (
+                    <div
+                      key={idx}
+                      className="border border-gray-200 rounded-lg overflow-hidden animate-pulse"
+                    >
+                      <div className="bg-blue-50 p-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-5 h-5 bg-blue-200 rounded"></div>
+                          <div className="w-5 h-5 bg-blue-200 rounded"></div>
+                          <div className="h-5 bg-blue-200 rounded w-1/3"></div>
+                          <div className="ml-auto h-5 bg-blue-200 rounded w-24"></div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
           ) : (
             <>
               {/* Categories Tree View with Toggle */}
@@ -386,317 +471,368 @@ const Categories = () => {
                   </div>
                 </div>
                 {categories.length > 0 ? (
-                  <div className="border border-gray-200 rounded-lg p-4 max-h-[600px] overflow-y-auto space-y-2">
-                    {categories.map((category) => {
-                      const categorySubcategories = subcategories.filter(
-                        (sub) => sub.category_id === category.id
-                      );
-                      const isCategoryExpanded = expandedCategories.has(
-                        category.id
-                      );
+                  <>
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="p-4 max-h-[600px] overflow-y-auto space-y-2">
+                        {categories.slice(0, displayCount).map((category) => {
+                          const categorySubcategories = subcategories.filter(
+                            (sub) => sub.category_id === category.id
+                          );
+                          const isCategoryExpanded = expandedCategories.has(
+                            category.id
+                          );
 
-                      return (
-                        <div
-                          key={category.id}
-                          className="border border-gray-200 rounded-lg overflow-hidden"
-                        >
-                          {/* Category Row */}
-                          <div className="group bg-blue-50 hover:bg-blue-100 transition-colors">
-                            <div className="flex items-center justify-between p-3">
-                              <div className="flex items-center gap-2 flex-1">
-                                <button
-                                  onClick={() => toggleCategory(category.id)}
-                                  className="p-1 hover:bg-blue-200 rounded transition-colors"
-                                >
-                                  {isCategoryExpanded ? (
-                                    <ChevronDown className="w-5 h-5 text-blue-700" />
-                                  ) : (
-                                    <ChevronRight className="w-5 h-5 text-blue-700" />
-                                  )}
-                                </button>
-                                {editingItem?.id === category.id &&
-                                editingItem?.type === "category" ? (
+                          return (
+                            <div
+                              key={category.id}
+                              className="border border-gray-200 rounded-lg overflow-hidden"
+                            >
+                              {/* Category Row */}
+                              <div className="group bg-blue-50 hover:bg-blue-100 transition-colors">
+                                <div className="flex items-center justify-between p-3">
                                   <div className="flex items-center gap-2 flex-1">
-                                    <input
-                                      type="text"
-                                      value={editValue}
-                                      onChange={(e) =>
-                                        setEditValue(e.target.value)
+                                    <button
+                                      onClick={() =>
+                                        toggleCategory(category.id)
                                       }
-                                      className="flex-1 px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                      autoFocus
-                                    />
-                                    <button
-                                      onClick={handleSaveEdit}
-                                      className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                                      className="p-1 hover:bg-blue-200 rounded transition-colors"
                                     >
-                                      <Save className="w-4 h-4" />
+                                      {isCategoryExpanded ? (
+                                        <ChevronDown className="w-5 h-5 text-blue-700" />
+                                      ) : (
+                                        <ChevronRight className="w-5 h-5 text-blue-700" />
+                                      )}
                                     </button>
-                                    <button
-                                      onClick={handleCancelEdit}
-                                      className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <Database className="w-5 h-5 text-blue-600" />
-                                    <span className="font-semibold text-blue-900 flex-1">
-                                      {category.name}
-                                    </span>
-                                    <span className="text-xs text-blue-600 bg-blue-200 px-2 py-1 rounded-full">
-                                      {categorySubcategories.length}{" "}
-                                      subcategories
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-                              {!(editingItem?.id === category.id) && (
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button
-                                    onClick={() =>
-                                      handleEdit(category, "category")
-                                    }
-                                    className="p-2 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
-                                    title="Edit Category"
-                                  >
-                                    <Edit2 className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      handleDelete(category, "category")
-                                    }
-                                    className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
-                                    title="Delete Category"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleOpenAddModal("subcategory", category.id, null)}
-                                    className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
-                                    title="Add Subcategory"
-                                  >
-                                    <Plus className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Subcategories */}
-                          {isCategoryExpanded && (
-                            <div className="bg-white">
-                              {categorySubcategories.length > 0 ? (
-                                categorySubcategories.map((subcategory) => {
-                                  const subcategoryParttypes = parttypes.filter(
-                                    (pt) => pt.subcategory_id === subcategory.id
-                                  );
-                                  const isSubcategoryExpanded =
-                                    expandedSubcategories.has(subcategory.id);
-
-                                  return (
-                                    <div
-                                      key={subcategory.id}
-                                      className="border-t border-gray-200"
-                                    >
-                                      {/* Subcategory Row */}
-                                      <div className="group bg-white hover:bg-gray-100 transition-colors">
-                                        <div className="flex items-center justify-between p-3 pl-12">
-                                          <div className="flex items-center gap-2 flex-1">
-                                            <button
-                                              onClick={() =>
-                                                toggleSubcategory(
-                                                  subcategory.id
-                                                )
-                                              }
-                                              className="p-1 hover:bg-gray-200 rounded transition-colors"
-                                            >
-                                              {isSubcategoryExpanded ? (
-                                                <ChevronDown className="w-4 h-4 text-gray-600" />
-                                              ) : (
-                                                <ChevronRight className="w-4 h-4 text-gray-600" />
-                                              )}
-                                            </button>
-                                            {editingItem?.id ===
-                                              subcategory.id &&
-                                            editingItem?.type ===
-                                              "subcategory" ? (
-                                              <div className="flex items-center gap-2 flex-1">
-                                                <input
-                                                  type="text"
-                                                  value={editValue}
-                                                  onChange={(e) =>
-                                                    setEditValue(e.target.value)
-                                                  }
-                                                  className="flex-1 px-3 py-1.5 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                                                  autoFocus
-                                                />
-                                                <button
-                                                  onClick={handleSaveEdit}
-                                                  className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
-                                                >
-                                                  <Save className="w-4 h-4" />
-                                                </button>
-                                                <button
-                                                  onClick={handleCancelEdit}
-                                                  className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
-                                                >
-                                                  <X className="w-4 h-4" />
-                                                </button>
-                                              </div>
-                                            ) : (
-                                              <>
-                                                <span className="font-medium text-gray-700 flex-1">
-                                                  {subcategory.name}
-                                                </span>
-                                                <span className="text-xs text-gray-600 bg-gray-200 px-2 py-1 rounded-full">
-                                                  {subcategoryParttypes.length}{" "}
-                                                  parts
-                                                </span>
-                                              </>
-                                            )}
-                                          </div>
-                                          {!(
-                                            editingItem?.id === subcategory.id
-                                          ) && (
-                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                              <button
-                                                onClick={() =>
-                                                  handleEdit(
-                                                    subcategory,
-                                                    "subcategory"
-                                                  )
-                                                }
-                                                className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
-                                                title="Edit Subcategory"
-                                              >
-                                                <Edit2 className="w-4 h-4" />
-                                              </button>
-                                              <button
-                                                onClick={() =>
-                                                  handleDelete(
-                                                    subcategory,
-                                                    "subcategory"
-                                                  )
-                                                }
-                                                className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
-                                                title="Delete Subcategory"
-                                              >
-                                                <Trash2 className="w-4 h-4" />
-                                              </button>
-                                              <button
-                                                onClick={() => handleOpenAddModal("parttype", null, subcategory.id)}
-                                                className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
-                                                title="Add Part Type"
-                                              >
-                                                <Plus className="w-4 h-4" />
-                                              </button>
-                                            </div>
-                                          )}
-                                        </div>
+                                    {editingItem?.id === category.id &&
+                                    editingItem?.type === "category" ? (
+                                      <div className="flex items-center gap-2 flex-1">
+                                        <input
+                                          type="text"
+                                          value={editValue}
+                                          onChange={(e) =>
+                                            setEditValue(e.target.value)
+                                          }
+                                          className="flex-1 px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                          autoFocus
+                                        />
+                                        <button
+                                          onClick={handleSaveEdit}
+                                          className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                                        >
+                                          <Save className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={handleCancelEdit}
+                                          className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                                        >
+                                          <X className="w-4 h-4" />
+                                        </button>
                                       </div>
-
-                                      {/* Part Types */}
-                                      {isSubcategoryExpanded &&
-                                        subcategoryParttypes.length > 0 && (
-                                          <div className="bg-gray-50">
-                                            {subcategoryParttypes.map(
-                                              (parttype) => (
-                                                <div
-                                                  key={parttype.id}
-                                                  className="group border-t border-gray-200 bg-white hover:bg-gray-100 transition-colors"
-                                                >
-                                                  <div className="flex items-center justify-between p-3 pl-24">
-                                                    {editingItem?.id ===
-                                                      parttype.id &&
-                                                    editingItem?.type ===
-                                                      "parttype" ? (
-                                                      <div className="flex items-center gap-2 flex-1">
-                                                        <input
-                                                          type="text"
-                                                          value={editValue}
-                                                          onChange={(e) =>
-                                                            setEditValue(
-                                                              e.target.value
-                                                            )
-                                                          }
-                                                          className="flex-1 px-3 py-1.5 border border-orange-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
-                                                          autoFocus
-                                                        />
-                                                        <button
-                                                          onClick={
-                                                            handleSaveEdit
-                                                          }
-                                                          className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
-                                                        >
-                                                          <Save className="w-4 h-4" />
-                                                        </button>
-                                                        <button
-                                                          onClick={
-                                                            handleCancelEdit
-                                                          }
-                                                          className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
-                                                        >
-                                                          <X className="w-4 h-4" />
-                                                        </button>
-                                                      </div>
-                                                    ) : (
-                                                      <>
-                                                        <div className="flex items-center gap-2 flex-1">
-                                                          <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
-                                                          <span className="text-sm text-gray-700">
-                                                            {parttype.name}
-                                                          </span>
-                                                        </div>
-                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                          <button
-                                                            onClick={() =>
-                                                              handleEdit(
-                                                                parttype,
-                                                                "parttype"
-                                                              )
-                                                            }
-                                                            className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
-                                                            title="Edit Part Type"
-                                                          >
-                                                            <Edit2 className="w-4 h-4" />
-                                                          </button>
-                                                          <button
-                                                            onClick={() =>
-                                                              handleDelete(
-                                                                parttype,
-                                                                "parttype"
-                                                              )
-                                                            }
-                                                            className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
-                                                            title="Delete Part Type"
-                                                          >
-                                                            <Trash2 className="w-4 h-4" />
-                                                          </button>
-                                                        </div>
-                                                      </>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                              )
-                                            )}
-                                          </div>
-                                        )}
+                                    ) : (
+                                      <>
+                                        <Database className="w-5 h-5 text-blue-600" />
+                                        <span className="font-semibold text-blue-900 flex-1">
+                                          {category.name}
+                                        </span>
+                                        <span className="text-xs text-blue-600 bg-blue-200 px-2 py-1 rounded-full">
+                                          {categorySubcategories.length}{" "}
+                                          subcategories
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+                                  {!(editingItem?.id === category.id) && (
+                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button
+                                        onClick={() =>
+                                          handleEdit(category, "category")
+                                        }
+                                        className="p-2 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
+                                        title="Edit Category"
+                                      >
+                                        <Edit2 className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          handleDeleteClick(
+                                            category,
+                                            "category"
+                                          )
+                                        }
+                                        className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                        title="Delete Categories"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          handleOpenAddModal(
+                                            "subcategory",
+                                            category.id,
+                                            null
+                                          )
+                                        }
+                                        className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                                        title="Add Subcategory"
+                                      >
+                                        <Plus className="w-4 h-4" />
+                                      </button>
                                     </div>
-                                  );
-                                })
-                              ) : (
-                                <div className="p-4 pl-12 text-sm text-gray-500 italic">
-                                  No subcategories
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Subcategories */}
+                              {isCategoryExpanded && (
+                                <div className="bg-white">
+                                  {categorySubcategories.length > 0 ? (
+                                    categorySubcategories.map((subcategory) => {
+                                      const subcategoryParttypes =
+                                        parttypes.filter(
+                                          (pt) =>
+                                            pt.subcategory_id === subcategory.id
+                                        );
+                                      const isSubcategoryExpanded =
+                                        expandedSubcategories.has(
+                                          subcategory.id
+                                        );
+
+                                      return (
+                                        <div
+                                          key={subcategory.id}
+                                          className="border-t border-gray-200"
+                                        >
+                                          {/* Subcategory Row */}
+                                          <div className="group bg-white hover:bg-gray-100 transition-colors">
+                                            <div className="flex items-center justify-between p-3 pl-12">
+                                              <div className="flex items-center gap-2 flex-1">
+                                                <button
+                                                  onClick={() =>
+                                                    toggleSubcategory(
+                                                      subcategory.id
+                                                    )
+                                                  }
+                                                  className="p-1 hover:bg-gray-200 rounded transition-colors"
+                                                >
+                                                  {isSubcategoryExpanded ? (
+                                                    <ChevronDown className="w-4 h-4 text-gray-600" />
+                                                  ) : (
+                                                    <ChevronRight className="w-4 h-4 text-gray-600" />
+                                                  )}
+                                                </button>
+                                                {editingItem?.id ===
+                                                  subcategory.id &&
+                                                editingItem?.type ===
+                                                  "subcategory" ? (
+                                                  <div className="flex items-center gap-2 flex-1">
+                                                    <input
+                                                      type="text"
+                                                      value={editValue}
+                                                      onChange={(e) =>
+                                                        setEditValue(
+                                                          e.target.value
+                                                        )
+                                                      }
+                                                      className="flex-1 px-3 py-1.5 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                      autoFocus
+                                                    />
+                                                    <button
+                                                      onClick={handleSaveEdit}
+                                                      className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                                                    >
+                                                      <Save className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                      onClick={handleCancelEdit}
+                                                      className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                                                    >
+                                                      <X className="w-4 h-4" />
+                                                    </button>
+                                                  </div>
+                                                ) : (
+                                                  <>
+                                                    <span className="font-medium text-gray-700 flex-1">
+                                                      {subcategory.name}
+                                                    </span>
+                                                    <span className="text-xs text-gray-600 bg-gray-200 px-2 py-1 rounded-full">
+                                                      {
+                                                        subcategoryParttypes.length
+                                                      }{" "}
+                                                      parts
+                                                    </span>
+                                                  </>
+                                                )}
+                                              </div>
+                                              {!(
+                                                editingItem?.id ===
+                                                subcategory.id
+                                              ) && (
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                  <button
+                                                    onClick={() =>
+                                                      handleEdit(
+                                                        subcategory,
+                                                        "subcategory"
+                                                      )
+                                                    }
+                                                    className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+                                                    title="Edit Subcategory"
+                                                  >
+                                                    <Edit2 className="w-4 h-4" />
+                                                  </button>
+                                                  <button
+                                                    onClick={() =>
+                                                      handleDeleteClick(
+                                                        subcategory,
+                                                        "subcategory"
+                                                      )
+                                                    }
+                                                    className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                                    title="Delete Subcategory"
+                                                  >
+                                                    <Trash2 className="w-4 h-4" />
+                                                  </button>
+                                                  <button
+                                                    onClick={() =>
+                                                      handleOpenAddModal(
+                                                        "parttype",
+                                                        null,
+                                                        subcategory.id
+                                                      )
+                                                    }
+                                                    className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                                                    title="Add Part Type"
+                                                  >
+                                                    <Plus className="w-4 h-4" />
+                                                  </button>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+
+                                          {/* Part Types */}
+                                          {isSubcategoryExpanded &&
+                                            subcategoryParttypes.length > 0 && (
+                                              <div className="bg-gray-50">
+                                                {subcategoryParttypes.map(
+                                                  (parttype) => (
+                                                    <div
+                                                      key={parttype.id}
+                                                      className="group border-t border-gray-200 bg-white hover:bg-gray-100 transition-colors"
+                                                    >
+                                                      <div className="flex items-center justify-between p-3 pl-24">
+                                                        {editingItem?.id ===
+                                                          parttype.id &&
+                                                        editingItem?.type ===
+                                                          "parttype" ? (
+                                                          <div className="flex items-center gap-2 flex-1">
+                                                            <input
+                                                              type="text"
+                                                              value={editValue}
+                                                              onChange={(e) =>
+                                                                setEditValue(
+                                                                  e.target.value
+                                                                )
+                                                              }
+                                                              className="flex-1 px-3 py-1.5 border border-orange-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                              autoFocus
+                                                            />
+                                                            <button
+                                                              onClick={
+                                                                handleSaveEdit
+                                                              }
+                                                              className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                                                            >
+                                                              <Save className="w-4 h-4" />
+                                                            </button>
+                                                            <button
+                                                              onClick={
+                                                                handleCancelEdit
+                                                              }
+                                                              className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                                                            >
+                                                              <X className="w-4 h-4" />
+                                                            </button>
+                                                          </div>
+                                                        ) : (
+                                                          <>
+                                                            <div className="flex items-center gap-2 flex-1">
+                                                              <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                                                              <span className="text-sm text-gray-700">
+                                                                {parttype.name}
+                                                              </span>
+                                                            </div>
+                                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                              <button
+                                                                onClick={() =>
+                                                                  handleEdit(
+                                                                    parttype,
+                                                                    "parttype"
+                                                                  )
+                                                                }
+                                                                className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+                                                                title="Edit Part Type"
+                                                              >
+                                                                <Edit2 className="w-4 h-4" />
+                                                              </button>
+                                                              <button
+                                                                onClick={() =>
+                                                                  handleDeleteClick(
+                                                                    parttype,
+                                                                    "parttype"
+                                                                  )
+                                                                }
+                                                                className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                                                title="Delete Part Type"
+                                                              >
+                                                                <Trash2 className="w-4 h-4" />
+                                                              </button>
+                                                            </div>
+                                                          </>
+                                                        )}
+                                                      </div>
+                                                    </div>
+                                                  )
+                                                )}
+                                              </div>
+                                            )}
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <div className="p-4 pl-12 text-sm text-gray-500 italic">
+                                      No subcategories
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                          );
+                        })}
+                        {/* Infinite scroll trigger */}
+                        {displayCount < categories.length && (
+                          <div ref={observerTarget} className="p-4">
+                            {loadingMore && (
+                              <div className="flex justify-center">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {/* Pagination Footer */}
+                      <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
+                        Showing {categories.length}{" "}
+                        {categories.length === 1 ? "category" : "categories"},{" "}
+                        {subcategories.length}{" "}
+                        {subcategories.length === 1
+                          ? "subcategory"
+                          : "subcategories"}
+                        , {parttypes.length}{" "}
+                        {parttypes.length === 1 ? "part type" : "part types"}
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <div className="text-center py-12">
                     <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -706,93 +842,207 @@ const Categories = () => {
               </div>
             </>
           )}
-        {/* Add Modal for Category, Subcategory, Part Type */}
-        {showAddModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
-            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
-              <h3 className="text-lg font-bold mb-4">
-                {addType === "category" && "Add New Category"}
-                {addType === "subcategory" && "Add New Subcategory"}
-                {addType === "parttype" && "Add New Part Type"}
-              </h3>
-              {addType === "category" && (
-                <>
-                  <div className="mb-3">
-                    <label className="block text-sm font-medium mb-1">Category Name</label>
-                    <input
-                      type="text"
-                      className="w-full border px-3 py-2 rounded-lg"
-                      value={newCategory}
-                      onChange={e => setNewCategory(e.target.value)}
-                      placeholder="Enter category name"
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="block text-sm font-medium mb-1">Subcategory Name</label>
-                    <input
-                      type="text"
-                      className="w-full border px-3 py-2 rounded-lg"
-                      value={newSubcategory}
-                      onChange={e => setNewSubcategory(e.target.value)}
-                      placeholder="Enter subcategory name"
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="block text-sm font-medium mb-1">Part Type </label>
-                    <input
-                      type="text"
-                      className="w-full border px-3 py-2 rounded-lg"
-                      value={newPartType}
-                      onChange={e => setNewPartType(e.target.value)}
-                      placeholder="Enter part type"
-                      disabled={!newSubcategory.trim()}
-                    />
-                  </div>
-                </>
-              )}
-              {addType === "subcategory" && (
-                <div className="mb-3">
-                  <label className="block text-sm font-medium mb-1">Subcategory Name</label>
-                  <input
-                    type="text"
-                    className="w-full border px-3 py-2 rounded-lg"
-                    value={newSubcategory}
-                    onChange={e => setNewSubcategory(e.target.value)}
-                    placeholder="Enter subcategory name"
-                  />
+          {/* Add Modal for Category, Subcategory, Part Type */}
+          {showAddModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+                <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    {addType === "category" && "Add New Categories"}
+                    {addType === "subcategory" && "Add New Subcategories"}
+                    {addType === "parttype" && "Add New Part Type Categories"}
+                  </h2>
+                  <button
+                    onClick={handleCloseAddModal}
+                    className="p-2 hover:bg-gray-100 rounded-lg"
+                    disabled={adding}
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
                 </div>
-              )}
-              {addType === "parttype" && (
-                <div className="mb-3">
-                  <label className="block text-sm font-medium mb-1">Part Type Name</label>
-                  <input
-                    type="text"
-                    className="w-full border px-3 py-2 rounded-lg"
-                    value={newPartType}
-                    onChange={e => setNewPartType(e.target.value)}
-                    placeholder="Enter part type name"
-                  />
+                <div className="p-6 space-y-4">
+                  {addType === "category" && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Categories Name
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          value={newCategory}
+                          onChange={(e) => setNewCategory(e.target.value)}
+                          placeholder="Enter categories name"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Subcategories Name
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                          value={newSubcategory}
+                          onChange={(e) => setNewSubcategory(e.target.value)}
+                          placeholder="Enter subcategories name"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Part Types Categories
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          value={newPartType}
+                          onChange={(e) => setNewPartType(e.target.value)}
+                          placeholder="Enter part type"
+                          disabled={!newSubcategory.trim()}
+                        />
+                      </div>
+                    </>
+                  )}
+                  {addType === "subcategory" && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Subcategory Name
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                        value={newSubcategory}
+                        onChange={(e) => setNewSubcategory(e.target.value)}
+                        placeholder="Enter subcategory name"
+                        autoFocus
+                      />
+                    </div>
+                  )}
+                  {addType === "parttype" && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Part Type Name
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        value={newPartType}
+                        onChange={(e) => setNewPartType(e.target.value)}
+                        placeholder="Enter part type name"
+                        autoFocus
+                      />
+                    </div>
+                  )}
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={handleAdd}
+                      disabled={adding}
+                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {adding ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          Adding...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          Add
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleCloseAddModal}
+                      disabled={adding}
+                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-              )}
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={handleCloseAddModal}
-                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300"
-                  disabled={adding}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAdd}
-                  className="px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600"
-                  disabled={adding}
-                >
-                  {adding ? "Adding..." : "Add"}
-                </button>
               </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Delete Confirmation Modal */}
+          {showDeleteModal && deleteItem && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+                <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Delete{" "}
+                    {deleteType === "category"
+                      ? "Category"
+                      : deleteType === "subcategory"
+                      ? "Subcategory"
+                      : "Part Type"}
+                  </h2>
+                  <button
+                    onClick={() => {
+                      setShowDeleteModal(false);
+                      setDeleteItem(null);
+                      setDeleteType("");
+                    }}
+                    className="p-2 hover:bg-gray-100 rounded-lg"
+                  >
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+                <div className="p-6">
+                  <div className="space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-red-100 rounded-lg">
+                        <AlertCircle className="w-5 h-5 text-red-600" />
+                      </div>
+                      <div>
+                        <p className="text-gray-900 font-medium mb-1">
+                          Delete "{deleteItem.name}"?
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          {deleteType === "category" &&
+                            "This will also delete all subcategories and part types under this category."}
+                          {deleteType === "subcategory" &&
+                            "This will also delete all part types under this subcategory."}
+                          {deleteType === "parttype" &&
+                            "This part type will be deleted."}
+                        </p>
+                        <p className="text-sm text-gray-600 mt-2">
+                          This cannot be undone.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3 mt-6">
+                      <button
+                        onClick={handleDelete}
+                        disabled={deleting}
+                        className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {deleting ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                            Deleting...
+                          </>
+                        ) : (
+                          "OK"
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowDeleteModal(false);
+                          setDeleteItem(null);
+                          setDeleteType("");
+                        }}
+                        disabled={deleting}
+                        className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
