@@ -61,6 +61,8 @@ import {
   setLastUploadedFileInfo,
   setLastUploadType as setReduxLastUploadType,
   setProductsFileInfo,
+  setProductsReadyForUpload as setReduxProductsReadyForUpload,
+  setUploadingProducts as setReduxUploadingProducts,
   clearCategories,
   clearProducts,
 } from "../store/slices/categorizerSlice";
@@ -99,6 +101,12 @@ const AcesPiesCategorizationTool = () => {
   );
   const productsFileInfo = useSelector(
     (state) => state.categorizer.productsFileInfo || null
+  );
+  const productsReadyForUpload = useSelector(
+    (state) => state.categorizer.productsReadyForUpload || false
+  );
+  const uploadingProducts = useSelector(
+    (state) => state.categorizer.uploadingProducts || false
   );
 
   // Local UI state (not persisted)
@@ -322,11 +330,339 @@ const AcesPiesCategorizationTool = () => {
     }
   };
 
+  // Upload products to Supabase
+  const uploadProductsToSupabase = async () => {
+    if (!products || products.length === 0) {
+      toast.error("No products to upload");
+      return;
+    }
+
+    console.log("Starting product upload. Total products:", products.length);
+    console.log("Sample product to upload:", products[0]);
+
+    dispatch(setReduxUploadingProducts(true));
+    const loadingToast = toast.loading("Uploading products to Supabase...");
+
+    try {
+      let successCount = 0;
+      let errorCount = 0;
+      const errors = [];
+
+      for (const product of products) {
+        // Generate embedding for product
+        const embedding = generateCategoryEmbedding(
+          product.name || "",
+          product.description || "",
+          ""
+        );
+
+        // Find category, subcategory, and parttype IDs from Supabase
+        const categoryName =
+          product.suggestedCategory || product.originalCategory;
+        const subcategoryName =
+          product.suggestedSubcategory || product.originalSubcategory;
+        const parttypeName =
+          product.suggestedPartType || product.originalPartType;
+
+        const { data: categoryData, error: catErr } = await supabase
+          .from("categories")
+          .select("id")
+          .eq("name", categoryName)
+          .single();
+
+        if (catErr) {
+          const errorMsg = `Category not found: "${categoryName}" for product: ${product.name}`;
+          console.error(errorMsg, catErr);
+          errors.push(errorMsg);
+          errorCount++;
+          continue;
+        }
+
+        const { data: subcategoryData, error: subErr } = await supabase
+          .from("subcategories")
+          .select("id")
+          .eq("name", subcategoryName)
+          .eq("category_id", categoryData?.id)
+          .single();
+
+        if (subErr) {
+          const errorMsg = `Subcategory not found: "${subcategoryName}" in "${categoryName}" for product: ${product.name}`;
+          console.error(errorMsg, subErr);
+          errors.push(errorMsg);
+          errorCount++;
+          continue;
+        }
+
+        const { data: parttypeData, error: ptErr } = await supabase
+          .from("parttypes")
+          .select("id")
+          .eq("name", parttypeName)
+          .eq("subcategory_id", subcategoryData?.id)
+          .single();
+
+        if (ptErr) {
+          const errorMsg = `Parttype not found: "${parttypeName}" in "${subcategoryName}" for product: ${product.name}`;
+          console.error(errorMsg, ptErr);
+          errors.push(errorMsg);
+          errorCount++;
+          continue;
+        }
+
+        if (!categoryData || !subcategoryData || !parttypeData) {
+          const errorMsg = `Missing category data for product: ${product.name} (cat: ${categoryName}, sub: ${subcategoryName}, pt: ${parttypeName})`;
+          console.error(errorMsg);
+          errors.push(errorMsg);
+          errorCount++;
+          continue;
+        }
+
+        // Insert product
+        const { error } = await supabase.from("products").insert({
+          name: product.name || product.productName,
+          description: product.description || "",
+          sku: product.sku || product.partNumber || null,
+          category_id: categoryData.id,
+          subcategory_id: subcategoryData.id,
+          parttype_id: parttypeData.id,
+          embedding,
+        });
+
+        if (error) {
+          console.error("Error inserting product:", error);
+          errorCount++;
+        } else {
+          successCount++;
+        }
+      }
+
+      console.log(
+        `Upload complete. Success: ${successCount}, Errors: ${errorCount}`
+      );
+      if (errors.length > 0) {
+        console.log("First 5 errors:", errors.slice(0, 5));
+      }
+
+      if (successCount > 0) {
+        toast.success(
+          `Successfully uploaded ${successCount} products to Supabase!${
+            errorCount > 0 ? ` (${errorCount} failed)` : ""
+          }`,
+          { id: loadingToast }
+        );
+      } else {
+        toast.error(
+          `Failed to upload products: ${errorCount} errors. Check console for details.`,
+          {
+            id: loadingToast,
+          }
+        );
+      }
+
+      // Clear products state after successful upload
+      if (successCount > 0) {
+        dispatch(setReduxProductsReadyForUpload(false));
+        dispatch(setReduxProducts([]));
+        dispatch(setProductsFileInfo(null));
+        setLastUploadedFileInfo(null);
+        setLastUploadType(null);
+      }
+    } catch (error) {
+      console.error("Error uploading products:", error);
+      toast.error(`Failed to upload products: ${error.message}`, {
+        id: loadingToast,
+      });
+    } finally {
+      dispatch(setReduxUploadingProducts(false));
+    }
+  };
+
+  // Assign categories using edge function (embedding-based)
+  const assignCategoriesViaEdgeFunction = async () => {
+    if (!products || products.length === 0) {
+      toast.error("No products to categorize");
+      return;
+    }
+
+    console.log("=== CALLING EDGE FUNCTION ===");
+    console.log("Total products to categorize:", products.length);
+    console.log("Sample product before mapping:", products[0]);
+
+    const productsToSend = products.map((p) => ({
+      id: p.id,
+      name: p.name || p.productName,
+      description: p.description || "",
+    }));
+
+    console.log("Products being sent to edge function:", productsToSend.length);
+    console.log("Sample product after mapping:", productsToSend[0]);
+
+    setIsProcessing(true);
+    const loadingToast = toast.loading(
+      "Assigning categories using embeddings..."
+    );
+
+    try {
+      // Call Supabase edge function to assign categories
+      const { data, error } = await supabase.functions.invoke(
+        "assign-categories",
+        {
+          body: {
+            products: productsToSend,
+          },
+        }
+      );
+
+      console.log("Edge function response:", { data, error });
+
+      if (error) {
+        console.error("Edge function error:", error);
+        throw error;
+      }
+
+      if (data && data.categorizedProducts) {
+        console.log(
+          "Categorized products received:",
+          data.categorizedProducts.length
+        );
+        console.log("Sample categorized product:", data.categorizedProducts[0]);
+
+        // Update products with assigned categories
+        const updatedProducts = products.map((product) => {
+          const assigned = data.categorizedProducts.find(
+            (p) => p.id === product.id
+          );
+          if (assigned) {
+            return {
+              ...product,
+              suggestedCategory: assigned.category,
+              suggestedSubcategory: assigned.subcategory,
+              suggestedPartType: assigned.partType,
+              confidence: assigned.confidence || 80,
+              status: "high-confidence",
+            };
+          }
+          return product;
+        });
+
+        console.log("Updated products count:", updatedProducts.length);
+        console.log("Sample updated product:", updatedProducts[0]);
+
+        dispatch(setReduxProducts(updatedProducts));
+        dispatch(setReduxProductsReadyForUpload(true));
+
+        toast.success(
+          `Successfully assigned categories to ${data.categorizedProducts.length} products!`,
+          { id: loadingToast }
+        );
+      }
+    } catch (error) {
+      console.error("Error assigning categories:", error);
+      toast.error(`Failed to assign categories: ${error.message}`, {
+        id: loadingToast,
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Diagnostic function to check database
+  const checkSupabaseData = async () => {
+    const loadingToast = toast.loading("Checking Supabase data...");
+    try {
+      const { data: cats, error: catErr } = await supabase
+        .from("categories")
+        .select("id, name, embedding");
+
+      const { data: subs, error: subErr } = await supabase
+        .from("subcategories")
+        .select("id, name, category_id, embedding");
+
+      const { data: pts, error: ptErr } = await supabase
+        .from("parttypes")
+        .select("id, name, subcategory_id, embedding");
+
+      if (catErr || subErr || ptErr) {
+        toast.error("Error checking database", { id: loadingToast });
+        console.error("Database Errors:", { catErr, subErr, ptErr });
+        return;
+      }
+
+      const catsWithEmbedding =
+        cats?.filter(
+          (c) =>
+            c.embedding && Array.isArray(c.embedding) && c.embedding.length > 0
+        ) || [];
+      const subsWithEmbedding =
+        subs?.filter(
+          (s) =>
+            s.embedding && Array.isArray(s.embedding) && s.embedding.length > 0
+        ) || [];
+      const ptsWithEmbedding =
+        pts?.filter(
+          (p) =>
+            p.embedding && Array.isArray(p.embedding) && p.embedding.length > 0
+        ) || [];
+
+      console.log("=== DATABASE STATUS ===");
+      console.log("Categories:", {
+        total: cats?.length || 0,
+        withEmbedding: catsWithEmbedding.length,
+      });
+      console.log("Subcategories:", {
+        total: subs?.length || 0,
+        withEmbedding: subsWithEmbedding.length,
+      });
+      console.log("Parttypes:", {
+        total: pts?.length || 0,
+        withEmbedding: ptsWithEmbedding.length,
+      });
+
+      if (cats?.length > 0) {
+        console.log("Sample category:", cats[0]);
+        console.log("Category embedding length:", cats[0]?.embedding?.length);
+      }
+
+      if (subs?.length > 0) {
+        console.log("Sample subcategory:", subs[0]);
+      }
+
+      if (pts?.length > 0) {
+        console.log("Sample parttype:", pts[0]);
+      }
+
+      if (cats?.length === 0) {
+        toast.error(
+          "No categories found! Please upload categories first using the 'Upload to Supabase' button.",
+          { id: loadingToast, duration: 6000 }
+        );
+        return;
+      }
+
+      toast.success(
+        `✓ Database OK: ${cats?.length || 0} categories, ${
+          subs?.length || 0
+        } subcategories, ${pts?.length || 0} parttypes. ` +
+          `Embeddings: ${catsWithEmbedding.length}/${cats?.length || 0} cats, ${
+            subsWithEmbedding.length
+          }/${subs?.length || 0} subs, ${ptsWithEmbedding.length}/${
+            pts?.length || 0
+          } pts`,
+        { id: loadingToast, duration: 5000 }
+      );
+    } catch (error) {
+      console.error("Error checking database:", error);
+      toast.error(`Failed: ${error.message}`, { id: loadingToast });
+    }
+  };
+
   // Reset uploadingCategories on component mount in case it was stuck from previous session
   React.useEffect(() => {
     if (uploadingCategories) {
       dispatch(setReduxUploadingCategories(false));
       toast.dismiss(); // Dismiss any lingering toast notifications
+    }
+    if (uploadingProducts) {
+      dispatch(setReduxUploadingProducts(false));
     }
   }, []); // Run only once on mount
 
@@ -376,6 +712,7 @@ const AcesPiesCategorizationTool = () => {
       dispatch(setReduxProducts(parsedData));
       dispatch(setReduxValidationResults(validation));
       dispatch(setProductsFileInfo({ name: filename, type: "text/csv" }));
+      dispatch(setReduxProductsReadyForUpload(false)); // Will be set to true after categorization
       setCurrentPage(1);
       setLastUploadedFileInfo({ name: filename, type: "text/csv" });
       setLastUploadType("products");
@@ -1072,6 +1409,47 @@ const AcesPiesCategorizationTool = () => {
                       activeCategories === "user" ? "User" : "ACES"
                     })`}
               </button>
+
+              <button
+                onClick={assignCategoriesViaEdgeFunction}
+                disabled={products.length === 0 || isProcessing}
+                className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 flex items-center gap-2 disabled:opacity-50 shadow-sm"
+              >
+                <Target className="w-4 h-4" />
+                Categories Assign
+              </button>
+
+              <button
+                onClick={checkSupabaseData}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm"
+              >
+                <Search className="w-4 h-4" />
+                Check DB
+              </button>
+
+              {productsReadyForUpload && products.length > 0 && (
+                <button
+                  onClick={uploadProductsToSupabase}
+                  disabled={uploadingProducts}
+                  className={`px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm ${
+                    uploadingProducts
+                      ? "bg-gray-400 cursor-not-allowed text-white"
+                      : "bg-indigo-600 text-white hover:bg-indigo-700"
+                  }`}
+                >
+                  {uploadingProducts ? (
+                    <>
+                      <span className="animate-spin">⏳</span>
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Upload to Supabase</span>
+                    </>
+                  )}
+                </button>
+              )}
 
               <button
                 onClick={handleExport}

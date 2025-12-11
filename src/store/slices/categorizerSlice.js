@@ -16,6 +16,8 @@ const initialState = {
   validationResults: null,
   lastUploadedFileInfo: null,
   lastUploadType: null,
+  productsReadyForUpload: false,
+  uploadingProducts: false,
 
   // File info for display
   categoriesFileInfo: null,
@@ -68,6 +70,12 @@ const categorizerSlice = createSlice({
     setProductsFileInfo: (state, action) => {
       state.productsFileInfo = action.payload;
     },
+    setProductsReadyForUpload: (state, action) => {
+      state.productsReadyForUpload = action.payload;
+    },
+    setUploadingProducts: (state, action) => {
+      state.uploadingProducts = action.payload;
+    },
 
     // Clear actions
     clearCategories: (state) => {
@@ -104,6 +112,8 @@ export const {
   setLastUploadedFileInfo,
   setLastUploadType,
   setProductsFileInfo,
+  setProductsReadyForUpload,
+  setUploadingProducts,
   clearCategories,
   clearProducts,
   clearAll,
