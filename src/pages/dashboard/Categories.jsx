@@ -10,226 +10,224 @@ import {
   AlertCircle,
   CheckCircle,
   Loader2,
+  Edit2,
+  X,
+  ChevronRight,
+  ChevronDown,
+  Plus,
+  Save,
 } from "lucide-react";
 import LoadingSpinner from "../../components/LoadingSpinner";
 
 const Categories = () => {
   const { user } = useSelector((state) => state.auth);
   const [categories, setCategories] = useState([]);
+  const [subcategories, setSubcategories] = useState([]);
+  const [parttypes, setParttypes] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [editValue, setEditValue] = useState("");
+  const [expandedCategories, setExpandedCategories] = useState(new Set());
+  const [expandedSubcategories, setExpandedSubcategories] = useState(new Set());
+  const [isAllExpanded, setIsAllExpanded] = useState(false);
   const [stats, setStats] = useState({
-    total: 0,
     categories: 0,
     subcategories: 0,
     partTypes: 0,
   });
 
   useEffect(() => {
-    loadCategories();
+    loadAllData();
   }, []);
 
-  const loadCategories = async () => {
+  const loadAllData = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      // Load categories
+      const { data: categoriesData, error: categoriesError } = await supabase
         .from("categories")
         .select("*")
-        .order("id", { ascending: true });
+        .order("name", { ascending: true });
 
-      if (error) throw error;
+      if (categoriesError) throw categoriesError;
 
-      setCategories(data || []);
-      calculateStats(data || []);
+      // Load subcategories with category info
+      const { data: subcategoriesData, error: subcategoriesError } =
+        await supabase
+          .from("subcategories")
+          .select("*, categories(name)")
+          .order("name", { ascending: true });
+
+      if (subcategoriesError) throw subcategoriesError;
+
+      // Load parttypes with subcategory and category info
+      const { data: parttypesData, error: parttypesError } = await supabase
+        .from("parttypes")
+        .select("*, subcategories(name, category_id, categories(name))")
+        .order("name", { ascending: true });
+
+      if (parttypesError) throw parttypesError;
+
+      setCategories(categoriesData || []);
+      setSubcategories(subcategoriesData || []);
+      setParttypes(parttypesData || []);
+
+      setStats({
+        categories: categoriesData?.length || 0,
+        subcategories: subcategoriesData?.length || 0,
+        partTypes: parttypesData?.length || 0,
+      });
     } catch (error) {
-      console.error("Error loading categories:", error);
-      toast.error("Failed to load categories");
+      console.error("Error loading data:", error);
+      toast.error("Failed to load data");
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateStats = (data) => {
-    const uniqueCategories = new Set(data.map((item) => item.category));
-    const uniqueSubcategories = new Set(data.map((item) => item.subcategory));
-    const uniquePartTypes = new Set(data.map((item) => item.part_type));
-
-    setStats({
-      total: data.length,
-      categories: uniqueCategories.size,
-      subcategories: uniqueSubcategories.size,
-      partTypes: uniquePartTypes.size,
-    });
+  // Edit handlers
+  const handleEdit = (item, type) => {
+    setEditingItem({ ...item, type });
+    setEditValue(item.name);
   };
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
+  const handleCancelEdit = () => {
+    setEditingItem(null);
+    setEditValue("");
+  };
 
-    if (!file.name.endsWith(".csv")) {
-      toast.error("Please upload a CSV file");
+  const handleSaveEdit = async () => {
+    if (!editValue.trim()) {
+      toast.error("Name cannot be empty");
       return;
     }
 
-    setUploading(true);
-
     try {
-      const text = await file.text();
-      const rows = text.split("\n").filter((row) => row.trim());
+      const tableName =
+        editingItem.type === "category"
+          ? "categories"
+          : editingItem.type === "subcategory"
+          ? "subcategories"
+          : "parttypes";
 
-      if (rows.length < 2) {
-        toast.error("CSV file is empty or invalid");
-        setUploading(false);
-        return;
-      }
-
-      const headers = rows[0].split(",").map((h) => h.trim().toLowerCase());
-
-      // Validate CSV headers
-      const requiredHeaders = ["category", "subcategory", "part_type"];
-      const missingHeaders = requiredHeaders.filter(
-        (h) => !headers.includes(h)
-      );
-
-      if (missingHeaders.length > 0) {
-        toast.error(`Missing required columns: ${missingHeaders.join(", ")}`);
-        setUploading(false);
-        return;
-      }
-
-      const categoryIndex = headers.indexOf("category");
-      const subcategoryIndex = headers.indexOf("subcategory");
-      const partTypeIndex = headers.indexOf("part_type");
-
-      const categoriesToUpload = [];
-
-      for (let i = 1; i < rows.length; i++) {
-        const columns = rows[i].split(",").map((c) => c.trim());
-
-        if (columns.length < 3) continue;
-
-        const category = columns[categoryIndex];
-        const subcategory = columns[subcategoryIndex];
-        const partType = columns[partTypeIndex];
-
-        if (category && subcategory && partType) {
-          categoriesToUpload.push({
-            category,
-            subcategory,
-            part_type: partType,
-          });
-        }
-      }
-
-      if (categoriesToUpload.length === 0) {
-        toast.error("No valid categories found in CSV");
-        setUploading(false);
-        return;
-      }
-
-      // Insert categories into Supabase
-      const { data, error } = await supabase
-        .from("categories")
-        .insert(categoriesToUpload)
-        .select();
+      const { error } = await supabase
+        .from(tableName)
+        .update({ name: editValue.trim() })
+        .eq("id", editingItem.id);
 
       if (error) throw error;
 
-      toast.success(
-        `Successfully uploaded ${categoriesToUpload.length} categories!`
-      );
-      loadCategories();
+      toast.success(`${editingItem.type} updated successfully`);
+      handleCancelEdit();
+      loadAllData();
     } catch (error) {
-      console.error("Error uploading categories:", error);
-      toast.error(error.message || "Failed to upload categories");
-    } finally {
-      setUploading(false);
-      event.target.value = "";
+      console.error("Error updating:", error);
+      toast.error("Failed to update");
     }
   };
 
-  const handleClearCategories = async () => {
+  // Delete handlers
+  const handleDelete = async (item, type) => {
+    const tableName =
+      type === "category"
+        ? "categories"
+        : type === "subcategory"
+        ? "subcategories"
+        : "parttypes";
+
+    const confirmMessage =
+      type === "category"
+        ? "This will also delete all subcategories and part types under this category."
+        : type === "subcategory"
+        ? "This will also delete all part types under this subcategory."
+        : "This part type will be deleted.";
+
     if (
       !window.confirm(
-        "Are you sure you want to delete all categories? This action cannot be undone."
+        `Are you sure you want to delete "${item.name}"?\n\n${confirmMessage}`
       )
     ) {
       return;
     }
 
-    setLoading(true);
     try {
-      const { error } = await supabase.from("categories").delete().neq("id", 0); // Delete all records
+      const { error } = await supabase
+        .from(tableName)
+        .delete()
+        .eq("id", item.id);
 
       if (error) throw error;
 
-      toast.success("All categories deleted successfully");
-      setCategories([]);
-      setStats({ total: 0, categories: 0, subcategories: 0, partTypes: 0 });
+      toast.success(`${type} deleted successfully`);
+      loadAllData();
     } catch (error) {
-      console.error("Error clearing categories:", error);
-      toast.error("Failed to clear categories");
-    } finally {
-      setLoading(false);
+      console.error("Error deleting:", error);
+      toast.error("Failed to delete");
     }
   };
 
-  const handleDownloadTemplate = () => {
-    const csvContent =
-      "category,subcategory,part_type\n" +
-      "Engine,Cooling System,Radiator\n" +
-      "Engine,Cooling System,Thermostat\n" +
-      "Brake System,Disc Brakes,Brake Pad\n" +
-      "Brake System,Disc Brakes,Brake Rotor\n";
+  const toggleCategory = (categoryId) => {
+    const newExpanded = new Set(expandedCategories);
+    if (newExpanded.has(categoryId)) {
+      newExpanded.delete(categoryId);
+    } else {
+      newExpanded.add(categoryId);
+    }
+    setExpandedCategories(newExpanded);
+  };
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "categories_template.csv";
-    a.click();
-    window.URL.revokeObjectURL(url);
-    toast.success("Template downloaded!");
+  const toggleSubcategory = (subcategoryId) => {
+    const newExpanded = new Set(expandedSubcategories);
+    if (newExpanded.has(subcategoryId)) {
+      newExpanded.delete(subcategoryId);
+    } else {
+      newExpanded.add(subcategoryId);
+    }
+    setExpandedSubcategories(newExpanded);
+  };
+
+  const toggleExpandAll = () => {
+    if (isAllExpanded) {
+      // Collapse all
+      setExpandedCategories(new Set());
+      setExpandedSubcategories(new Set());
+      setIsAllExpanded(false);
+    } else {
+      // Expand all
+      setExpandedCategories(new Set(categories.map((c) => c.id)));
+      setExpandedSubcategories(new Set(subcategories.map((s) => s.id)));
+      setIsAllExpanded(true);
+    }
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-7xl mx-auto">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         {/* Header */}
         <div className="border-b border-gray-200 px-6 py-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
-                <Database className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  Categories Management
-                </h2>
-                <p className="text-gray-500 text-sm mt-0.5">
-                  Upload and manage product categories
-                </p>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+              <Database className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">
+                Categories Management
+              </h2>
+              <p className="text-gray-500 text-sm mt-0.5">
+                Manage categories, subcategories, and part types
+              </p>
             </div>
           </div>
         </div>
 
         {/* Stats Cards */}
         <div className="p-6 border-b border-gray-200">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
               <div className="text-sm text-blue-600 font-medium mb-1">
-                Total Records
-              </div>
-              <div className="text-2xl font-bold text-blue-900">
-                {stats.total}
-              </div>
-            </div>
-            <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-              <div className="text-sm text-green-600 font-medium mb-1">
                 Categories
               </div>
-              <div className="text-2xl font-bold text-green-900">
+              <div className="text-2xl font-bold text-blue-900">
                 {stats.categories}
               </div>
             </div>
@@ -252,112 +250,347 @@ const Categories = () => {
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="p-6 space-y-4">
-          {/* Upload Section */}
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-            <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              Upload Categories CSV
-            </h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Upload a CSV file with columns: category, subcategory, part_type
-            </p>
-            <div className="flex items-center justify-center gap-3">
-              <label className="cursor-pointer">
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  disabled={uploading}
-                />
-                <div className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium py-2.5 px-6 rounded-lg transition-all duration-200 flex items-center gap-2">
-                  {uploading ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5" />
-                      Choose CSV File
-                    </>
-                  )}
-                </div>
-              </label>
-              <button
-                onClick={handleDownloadTemplate}
-                className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2.5 px-6 rounded-lg transition-all duration-200 flex items-center gap-2"
-              >
-                <Download className="w-5 h-5" />
-                Download Template
-              </button>
-            </div>
-          </div>
-
-          {/* Category List */}
+        {/* Content */}
+        <div className="p-6">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <LoadingSpinner size="lg" text="Loading categories..." />
-            </div>
-          ) : categories.length > 0 ? (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Uploaded Categories ({categories.length})
-                </h3>
-                <button
-                  onClick={handleClearCategories}
-                  className="bg-red-50 hover:bg-red-100 text-red-600 font-medium py-2 px-4 rounded-lg transition-all duration-200 flex items-center gap-2"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Clear All
-                </button>
-              </div>
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="max-h-96 overflow-y-auto">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 sticky top-0">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Category
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Subcategory
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Part Type
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {categories.map((item) => (
-                        <tr key={item.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm text-gray-900">
-                            {item.category}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-900">
-                            {item.subcategory}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-900">
-                            {item.part_type}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              <LoadingSpinner size="lg" text="Loading data..." />
             </div>
           ) : (
-            <div className="text-center py-12">
-              <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No categories uploaded yet</p>
-              <p className="text-sm text-gray-500 mt-2">
-                Upload a CSV file to get started
-              </p>
-            </div>
+            <>
+              {/* Categories Tree View with Toggle */}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    All Categories
+                  </h3>
+                  <button
+                    onClick={toggleExpandAll}
+                    className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${
+                      isAllExpanded
+                        ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        : "bg-blue-50 text-blue-600 hover:bg-blue-100"
+                    }`}
+                  >
+                    {isAllExpanded ? (
+                      <>
+                        <ChevronRight className="w-4 h-4" />
+                        Collapse All
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4" />
+                        Expand All
+                      </>
+                    )}
+                  </button>
+                </div>
+                {categories.length > 0 ? (
+                  <div className="border border-gray-200 rounded-lg p-4 max-h-[600px] overflow-y-auto space-y-2">
+                    {categories.map((category) => {
+                      const categorySubcategories = subcategories.filter(
+                        (sub) => sub.category_id === category.id
+                      );
+                      const isCategoryExpanded = expandedCategories.has(
+                        category.id
+                      );
+
+                      return (
+                        <div
+                          key={category.id}
+                          className="border border-gray-200 rounded-lg overflow-hidden"
+                        >
+                          {/* Category Row */}
+                          <div className="group bg-blue-50 hover:bg-blue-100 transition-colors">
+                            <div className="flex items-center justify-between p-3">
+                              <div className="flex items-center gap-2 flex-1">
+                                <button
+                                  onClick={() => toggleCategory(category.id)}
+                                  className="p-1 hover:bg-blue-200 rounded transition-colors"
+                                >
+                                  {isCategoryExpanded ? (
+                                    <ChevronDown className="w-5 h-5 text-blue-700" />
+                                  ) : (
+                                    <ChevronRight className="w-5 h-5 text-blue-700" />
+                                  )}
+                                </button>
+                                {editingItem?.id === category.id &&
+                                editingItem?.type === "category" ? (
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <input
+                                      type="text"
+                                      value={editValue}
+                                      onChange={(e) =>
+                                        setEditValue(e.target.value)
+                                      }
+                                      className="flex-1 px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                      autoFocus
+                                    />
+                                    <button
+                                      onClick={handleSaveEdit}
+                                      className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                                    >
+                                      <Save className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={handleCancelEdit}
+                                      className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Database className="w-5 h-5 text-blue-600" />
+                                    <span className="font-semibold text-blue-900 flex-1">
+                                      {category.name}
+                                    </span>
+                                    <span className="text-xs text-blue-600 bg-blue-200 px-2 py-1 rounded-full">
+                                      {categorySubcategories.length}{" "}
+                                      subcategories
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                              {!(editingItem?.id === category.id) && (
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() =>
+                                      handleEdit(category, "category")
+                                    }
+                                    className="p-2 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
+                                    title="Edit Category"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      handleDelete(category, "category")
+                                    }
+                                    className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                    title="Delete Category"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Subcategories */}
+                          {isCategoryExpanded && (
+                            <div className="bg-white">
+                              {categorySubcategories.length > 0 ? (
+                                categorySubcategories.map((subcategory) => {
+                                  const subcategoryParttypes = parttypes.filter(
+                                    (pt) => pt.subcategory_id === subcategory.id
+                                  );
+                                  const isSubcategoryExpanded =
+                                    expandedSubcategories.has(subcategory.id);
+
+                                  return (
+                                    <div
+                                      key={subcategory.id}
+                                      className="border-t border-gray-200"
+                                    >
+                                      {/* Subcategory Row */}
+                                      <div className="group bg-white hover:bg-gray-100 transition-colors">
+                                        <div className="flex items-center justify-between p-3 pl-12">
+                                          <div className="flex items-center gap-2 flex-1">
+                                            <button
+                                              onClick={() =>
+                                                toggleSubcategory(
+                                                  subcategory.id
+                                                )
+                                              }
+                                              className="p-1 hover:bg-gray-200 rounded transition-colors"
+                                            >
+                                              {isSubcategoryExpanded ? (
+                                                <ChevronDown className="w-4 h-4 text-gray-600" />
+                                              ) : (
+                                                <ChevronRight className="w-4 h-4 text-gray-600" />
+                                              )}
+                                            </button>
+                                            {editingItem?.id ===
+                                              subcategory.id &&
+                                            editingItem?.type ===
+                                              "subcategory" ? (
+                                              <div className="flex items-center gap-2 flex-1">
+                                                <input
+                                                  type="text"
+                                                  value={editValue}
+                                                  onChange={(e) =>
+                                                    setEditValue(e.target.value)
+                                                  }
+                                                  className="flex-1 px-3 py-1.5 border border-purple-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                  autoFocus
+                                                />
+                                                <button
+                                                  onClick={handleSaveEdit}
+                                                  className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                                                >
+                                                  <Save className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                  onClick={handleCancelEdit}
+                                                  className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                                                >
+                                                  <X className="w-4 h-4" />
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <>
+                                                <span className="font-medium text-gray-700 flex-1">
+                                                  {subcategory.name}
+                                                </span>
+                                                <span className="text-xs text-gray-600 bg-gray-200 px-2 py-1 rounded-full">
+                                                  {subcategoryParttypes.length}{" "}
+                                                  parts
+                                                </span>
+                                              </>
+                                            )}
+                                          </div>
+                                          {!(
+                                            editingItem?.id === subcategory.id
+                                          ) && (
+                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                              <button
+                                                onClick={() =>
+                                                  handleEdit(
+                                                    subcategory,
+                                                    "subcategory"
+                                                  )
+                                                }
+                                                className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+                                                title="Edit Subcategory"
+                                              >
+                                                <Edit2 className="w-4 h-4" />
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  handleDelete(
+                                                    subcategory,
+                                                    "subcategory"
+                                                  )
+                                                }
+                                                className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                                title="Delete Subcategory"
+                                              >
+                                                <Trash2 className="w-4 h-4" />
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Part Types */}
+                                      {isSubcategoryExpanded &&
+                                        subcategoryParttypes.length > 0 && (
+                                          <div className="bg-gray-50">
+                                            {subcategoryParttypes.map(
+                                              (parttype) => (
+                                                <div
+                                                  key={parttype.id}
+                                                  className="group border-t border-gray-200 bg-white hover:bg-gray-100 transition-colors"
+                                                >
+                                                  <div className="flex items-center justify-between p-3 pl-24">
+                                                    {editingItem?.id ===
+                                                      parttype.id &&
+                                                    editingItem?.type ===
+                                                      "parttype" ? (
+                                                      <div className="flex items-center gap-2 flex-1">
+                                                        <input
+                                                          type="text"
+                                                          value={editValue}
+                                                          onChange={(e) =>
+                                                            setEditValue(
+                                                              e.target.value
+                                                            )
+                                                          }
+                                                          className="flex-1 px-3 py-1.5 border border-orange-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                          autoFocus
+                                                        />
+                                                        <button
+                                                          onClick={
+                                                            handleSaveEdit
+                                                          }
+                                                          className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600"
+                                                        >
+                                                          <Save className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                          onClick={
+                                                            handleCancelEdit
+                                                          }
+                                                          className="p-1.5 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                                                        >
+                                                          <X className="w-4 h-4" />
+                                                        </button>
+                                                      </div>
+                                                    ) : (
+                                                      <>
+                                                        <div className="flex items-center gap-2 flex-1">
+                                                          <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                                                          <span className="text-sm text-gray-700">
+                                                            {parttype.name}
+                                                          </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                          <button
+                                                            onClick={() =>
+                                                              handleEdit(
+                                                                parttype,
+                                                                "parttype"
+                                                              )
+                                                            }
+                                                            className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+                                                            title="Edit Part Type"
+                                                          >
+                                                            <Edit2 className="w-4 h-4" />
+                                                          </button>
+                                                          <button
+                                                            onClick={() =>
+                                                              handleDelete(
+                                                                parttype,
+                                                                "parttype"
+                                                              )
+                                                            }
+                                                            className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                                            title="Delete Part Type"
+                                                          >
+                                                            <Trash2 className="w-4 h-4" />
+                                                          </button>
+                                                        </div>
+                                                      </>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              )
+                                            )}
+                                          </div>
+                                        )}
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <div className="p-4 pl-12 text-sm text-gray-500 italic">
+                                  No subcategories
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-600">No categories found</p>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>

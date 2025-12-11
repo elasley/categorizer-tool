@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import {
   Search,
   Download,
@@ -46,16 +47,64 @@ import { acesCategories } from "../data/acesCategories";
 import { supabase } from "../config/supabase";
 import { generateCategoryEmbedding } from "../utils/embeddingUtils";
 import toast from "react-hot-toast";
+import {
+  setCategories as setReduxCategories,
+  setUserCategories as setReduxUserCategories,
+  setCustomCategoriesUploaded as setReduxCustomCategoriesUploaded,
+  setActiveCategories as setReduxActiveCategories,
+  setCategoriesReadyForUpload as setReduxCategoriesReadyForUpload,
+  setPendingCategoriesData as setReduxPendingCategoriesData,
+  setUploadingCategories as setReduxUploadingCategories,
+  setCategoriesFileInfo,
+  setProducts as setReduxProducts,
+  setValidationResults as setReduxValidationResults,
+  setLastUploadedFileInfo,
+  setLastUploadType as setReduxLastUploadType,
+  setProductsFileInfo,
+  clearCategories,
+  clearProducts,
+} from "../store/slices/categorizerSlice";
 
 const AcesPiesCategorizationTool = () => {
-  const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState(acesCategories);
-  const [customCategoriesUploaded, setCustomCategoriesUploaded] =
-    useState(false);
-  const [activeCategories, setActiveCategories] = useState("aces"); // 'aces' or 'user'
-  const [userCategories, setUserCategories] = useState(null);
+  const dispatch = useDispatch();
+
+  // Get persisted state from Redux
+  const products = useSelector((state) => state.categorizer.products || []);
+  const categories = useSelector(
+    (state) => state.categorizer.categories || acesCategories
+  );
+  const customCategoriesUploaded = useSelector(
+    (state) => state.categorizer.customCategoriesUploaded || false
+  );
+  const activeCategories = useSelector(
+    (state) => state.categorizer.activeCategories || "aces"
+  );
+  const userCategories = useSelector(
+    (state) => state.categorizer.userCategories || null
+  );
+  const categoriesReadyForUpload = useSelector(
+    (state) => state.categorizer.categoriesReadyForUpload || false
+  );
+  const pendingCategoriesData = useSelector(
+    (state) => state.categorizer.pendingCategoriesData || null
+  );
+  const uploadingCategories = useSelector(
+    (state) => state.categorizer.uploadingCategories || false
+  );
+  const validationResults = useSelector(
+    (state) => state.categorizer.validationResults || null
+  );
+  const categoriesFileInfo = useSelector(
+    (state) => state.categorizer.categoriesFileInfo || null
+  );
+  const productsFileInfo = useSelector(
+    (state) => state.categorizer.productsFileInfo || null
+  );
+
+  // Local UI state (not persisted)
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const productFileInputRef = useRef(null);
+
   // Track expanded categories/subcategories in the Category modal
   const [expanded, setExpanded] = useState({});
   const toggleExpand = (key) =>
@@ -91,30 +140,28 @@ const AcesPiesCategorizationTool = () => {
     partType,
     type,
   }) => {
-    setCategories((prev) => {
-      const updated = JSON.parse(JSON.stringify(prev));
-      if (type === "subcategory" && category && subcategory) {
-        if (!updated[category][subcategory]) {
-          updated[category][subcategory] = [];
-        }
-      } else if (type === "partType" && category && subcategory && partType) {
-        if (!updated[category][subcategory]) {
-          updated[category][subcategory] = [];
-        }
-        if (!updated[category][subcategory].includes(partType)) {
-          updated[category][subcategory].push(partType);
-        }
+    const updated = JSON.parse(JSON.stringify(categories));
+    if (type === "subcategory" && category && subcategory) {
+      if (!updated[category][subcategory]) {
+        updated[category][subcategory] = [];
       }
-      return updated;
-    });
+    } else if (type === "partType" && category && subcategory && partType) {
+      if (!updated[category][subcategory]) {
+        updated[category][subcategory] = [];
+      }
+      if (!updated[category][subcategory].includes(partType)) {
+        updated[category][subcategory].push(partType);
+      }
+    }
+    dispatch(setReduxCategories(updated));
   };
+
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPreparingAI, setIsPreparingAI] = useState(false);
   const [apiError, setApiError] = useState(null);
-  const [validationResults, setValidationResults] = useState(null);
   const [lastUploadedFileInfo, setLastUploadedFileInfo] = useState(null);
   const [lastUploadType, setLastUploadType] = useState(null);
 
@@ -131,87 +178,157 @@ const AcesPiesCategorizationTool = () => {
     totalBatches: 0,
   });
   const [estimatedCost, setEstimatedCost] = useState(null);
-  const [uploadingCategories, setUploadingCategories] = useState(false);
 
   const itemsPerPage = 50;
 
-  // Save categories to Supabase with NLP embeddings
+  // Save categories to Supabase with relational structure and NLP embeddings
   const saveCategoriesWithEmbeddings = async (categoriesData) => {
-    setUploadingCategories(true);
+    dispatch(setReduxUploadingCategories(true));
     const loadingToast = toast.loading(
-      "Generating embeddings and saving categories..."
+      "Generating embeddings and saving to Supabase..."
     );
 
     try {
-      const categoriesToInsert = [];
-
-      // Convert nested category object to flat array
-      Object.entries(categoriesData).forEach(([category, subcategories]) => {
-        if (subcategories && typeof subcategories === "object") {
-          Object.entries(subcategories).forEach(([subcategory, partTypes]) => {
-            if (Array.isArray(partTypes)) {
-              partTypes.forEach((partType) => {
-                // Generate embedding for each category entry
-                const embedding = generateCategoryEmbedding(
-                  category,
-                  subcategory,
-                  partType
-                );
-
-                categoriesToInsert.push({
-                  category: category,
-                  subcategory: subcategory,
-                  part_type: partType,
-                  embedding: embedding,
-                });
-              });
-            }
-          });
-        }
-      });
-
-      if (categoriesToInsert.length === 0) {
-        toast.error("No valid categories to save", { id: loadingToast });
-        return;
-      }
-
-      // Insert in batches to avoid payload size limits
-      const batchSize = 100;
       let totalInserted = 0;
+      const categoryMap = new Map(); // categoryName -> categoryId
+      const subcategoryMap = new Map(); // `${categoryId}_${subcategoryName}` -> subcategoryId
 
-      for (let i = 0; i < categoriesToInsert.length; i += batchSize) {
-        const batch = categoriesToInsert.slice(i, i + batchSize);
+      // Step 1: Insert Categories
+      const uniqueCategories = [...new Set(Object.keys(categoriesData))];
+
+      for (const categoryName of uniqueCategories) {
+        const embedding = generateCategoryEmbedding(categoryName, "", "");
 
         const { data, error } = await supabase
           .from("categories")
-          .insert(batch)
-          .select();
+          .insert({ name: categoryName, embedding })
+          .select("id, name")
+          .single();
 
         if (error) {
-          console.error("Supabase insert error:", error);
+          console.error("Error inserting category:", error);
           throw error;
         }
 
-        totalInserted += batch.length;
-        toast.loading(
-          `Saved ${totalInserted}/${categoriesToInsert.length} categories...`,
-          { id: loadingToast }
-        );
+        categoryMap.set(categoryName, data.id);
+        totalInserted++;
+      }
+
+      toast.loading(`Saved ${totalInserted} categories...`, {
+        id: loadingToast,
+      });
+
+      // Step 2: Insert Subcategories
+      for (const [categoryName, subcategories] of Object.entries(
+        categoriesData
+      )) {
+        const categoryId = categoryMap.get(categoryName);
+
+        if (subcategories && typeof subcategories === "object") {
+          for (const subcategoryName of Object.keys(subcategories)) {
+            const embedding = generateCategoryEmbedding(
+              categoryName,
+              subcategoryName,
+              ""
+            );
+
+            const { data, error } = await supabase
+              .from("subcategories")
+              .insert({
+                category_id: categoryId,
+                name: subcategoryName,
+                embedding,
+              })
+              .select("id, name")
+              .single();
+
+            if (error) {
+              console.error("Error inserting subcategory:", error);
+              throw error;
+            }
+
+            subcategoryMap.set(`${categoryId}_${subcategoryName}`, data.id);
+            totalInserted++;
+          }
+        }
+      }
+
+      toast.loading(`Saved subcategories...`, { id: loadingToast });
+
+      // Step 3: Insert Part Types
+      for (const [categoryName, subcategories] of Object.entries(
+        categoriesData
+      )) {
+        const categoryId = categoryMap.get(categoryName);
+
+        if (subcategories && typeof subcategories === "object") {
+          for (const [subcategoryName, partTypes] of Object.entries(
+            subcategories
+          )) {
+            const subcategoryId = subcategoryMap.get(
+              `${categoryId}_${subcategoryName}`
+            );
+
+            if (Array.isArray(partTypes)) {
+              for (const partTypeName of partTypes) {
+                const embedding = generateCategoryEmbedding(
+                  categoryName,
+                  subcategoryName,
+                  partTypeName
+                );
+
+                const { error } = await supabase.from("parttypes").insert({
+                  subcategory_id: subcategoryId,
+                  name: partTypeName,
+                  embedding,
+                });
+
+                if (error) {
+                  console.error("Error inserting part type:", error);
+                  throw error;
+                }
+
+                totalInserted++;
+              }
+            }
+          }
+        }
       }
 
       toast.success(
-        `Successfully saved ${totalInserted} categories with embeddings!`,
+        `Successfully saved ${totalInserted} items (categories, subcategories, and part types) to Supabase!`,
         { id: loadingToast }
       );
+
+      // Clear all category upload states to hide the upload notification
+      dispatch(setReduxCategoriesReadyForUpload(false));
+      dispatch(setReduxPendingCategoriesData(null));
+      dispatch(setCategoriesFileInfo(null));
+      dispatch(setReduxCustomCategoriesUploaded(false));
+      dispatch(setReduxUserCategories(null));
+      dispatch(setReduxActiveCategories("aces"));
+      dispatch(setReduxCategories(acesCategories));
+
+      // Clear local state to hide file upload notification
+      setLastUploadedFileInfo(null);
+      setLastUploadType(null);
     } catch (error) {
       console.error("Error saving categories:", error);
       toast.error(`Failed to save categories: ${error.message}`, {
         id: loadingToast,
       });
     } finally {
-      setUploadingCategories(false);
+      dispatch(setReduxUploadingCategories(false));
     }
   };
+
+  // Reset uploadingCategories on component mount in case it was stuck from previous session
+  React.useEffect(() => {
+    if (uploadingCategories) {
+      dispatch(setReduxUploadingCategories(false));
+      toast.dismiss(); // Dismiss any lingering toast notifications
+    }
+  }, []); // Run only once on mount
 
   React.useEffect(() => {
     if (products.length > 0 && useOpenAI) {
@@ -240,14 +357,15 @@ const AcesPiesCategorizationTool = () => {
         return;
       }
 
-      // Save categories to Supabase with embeddings
-      await saveCategoriesWithEmbeddings(parsedData);
-
-      setUserCategories(parsedData);
-      setCategories(parsedData);
-      setCustomCategoriesUploaded(true);
-      setActiveCategories("user");
-      setValidationResults(validation);
+      // Store categories and show upload button (don't save automatically)
+      dispatch(setReduxPendingCategoriesData(parsedData));
+      dispatch(setReduxCategoriesReadyForUpload(true));
+      dispatch(setReduxUserCategories(parsedData));
+      dispatch(setReduxCategories(parsedData));
+      dispatch(setReduxCustomCategoriesUploaded(true));
+      dispatch(setReduxActiveCategories("user"));
+      dispatch(setReduxValidationResults(validation));
+      dispatch(setCategoriesFileInfo({ name: filename, type: "text/csv" }));
       setLastUploadedFileInfo({ name: filename, type: "text/csv" });
       setLastUploadType("categories");
     } else {
@@ -255,8 +373,9 @@ const AcesPiesCategorizationTool = () => {
         return;
       }
 
-      setProducts(parsedData);
-      setValidationResults(validation);
+      dispatch(setReduxProducts(parsedData));
+      dispatch(setReduxValidationResults(validation));
+      dispatch(setProductsFileInfo({ name: filename, type: "text/csv" }));
       setCurrentPage(1);
       setLastUploadedFileInfo({ name: filename, type: "text/csv" });
       setLastUploadType("products");
@@ -386,7 +505,7 @@ const AcesPiesCategorizationTool = () => {
         };
       });
 
-      setProducts(updatedProducts);
+      dispatch(setReduxProducts(updatedProducts));
     } catch (error) {
       // Surface the specific API error to the user and stop processing
       console.error("OpenAI error", error);
@@ -447,17 +566,19 @@ const AcesPiesCategorizationTool = () => {
         }
       });
 
-      setProducts(
-        categorizedProducts.map((product) => ({
-          ...product,
-          // Preserve original categories from import
-          originalCategory:
-            product.originalCategory || product.suggestedCategory,
-          originalSubcategory:
-            product.originalSubcategory || product.suggestedSubcategory,
-          originalPartType:
-            product.originalPartType || product.suggestedPartType,
-        }))
+      dispatch(
+        setReduxProducts(
+          categorizedProducts.map((product) => ({
+            ...product,
+            // Preserve original categories from import
+            originalCategory:
+              product.originalCategory || product.suggestedCategory,
+            originalSubcategory:
+              product.originalSubcategory || product.suggestedSubcategory,
+            originalPartType:
+              product.originalPartType || product.suggestedPartType,
+          }))
+        )
       );
     } catch (error) {
       alert("Categorization failed. Please check your data and try again.");
@@ -488,7 +609,7 @@ const AcesPiesCategorizationTool = () => {
       };
     });
 
-    setProducts(updatedProducts);
+    dispatch(setReduxProducts(updatedProducts));
   };
 
   const updateProductCategory = (
@@ -497,52 +618,49 @@ const AcesPiesCategorizationTool = () => {
     subcategory,
     partType
   ) => {
-    setProducts((prevProducts) =>
-      prevProducts.map((p) =>
-        p.id === productId
-          ? {
-              ...p,
-              suggestedCategory: category,
-              suggestedSubcategory: subcategory,
-              suggestedPartType: partType,
-              status: "manual-assigned",
-              confidence: 100,
-            }
-          : p
-      )
+    const updatedProducts = products.map((p) =>
+      p.id === productId
+        ? {
+            ...p,
+            suggestedCategory: category,
+            suggestedSubcategory: subcategory,
+            suggestedPartType: partType,
+            status: "manual-assigned",
+            confidence: 100,
+          }
+        : p
     );
+    dispatch(setReduxProducts(updatedProducts));
   };
 
   const handleFieldUpdate = (productId, updatedFields) => {
-    setProducts((prevProducts) =>
-      prevProducts.map((p) =>
-        p.id === productId
-          ? {
-              ...p,
-              ...updatedFields,
-              ...(updatedFields.suggestedCategory ||
-              updatedFields.suggestedSubcategory ||
-              updatedFields.suggestedPartType
-                ? { status: "manual-assigned", confidence: 100 }
-                : {}),
-            }
-          : p
-      )
+    const updatedProducts = products.map((p) =>
+      p.id === productId
+        ? {
+            ...p,
+            ...updatedFields,
+            ...(updatedFields.suggestedCategory ||
+            updatedFields.suggestedSubcategory ||
+            updatedFields.suggestedPartType
+              ? { status: "manual-assigned", confidence: 100 }
+              : {}),
+          }
+        : p
     );
+    dispatch(setReduxProducts(updatedProducts));
   };
 
   const handleUpdateCategories = (updatedCategories) => {
-    setCategories(updatedCategories);
-    // No localStorage/sessionStorage persistence here; categories live in React state only
+    dispatch(setReduxCategories(updatedCategories));
+    // Categories now persisted in Redux
   };
 
   const handleBulkUpdateProducts = (updatedProducts) => {
-    setProducts((prevProducts) =>
-      prevProducts.map((p) => {
-        const updated = updatedProducts.find((u) => u.id === p.id);
-        return updated ? { ...p, ...updated } : p;
-      })
-    );
+    const newProducts = products.map((p) => {
+      const updated = updatedProducts.find((u) => u.id === p.id);
+      return updated ? { ...p, ...updated } : p;
+    });
+    dispatch(setReduxProducts(newProducts));
   };
 
   const openBulkAssignmentForProblematic = () => {
@@ -648,52 +766,145 @@ const AcesPiesCategorizationTool = () => {
             )}
           </div>
         )}
-        {customCategoriesUploaded && (
-          <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 flex items-center justify-between">
-            <div className="flex items-center gap-3 flex-1">
-              <CheckCircle className="w-4 h-4 flex-shrink-0" />
-              <span>User Category Tree Uploaded</span>
-              <div className="flex items-center gap-2 ml-4">
-                <label className="text-xs font-medium">Active Tree:</label>
-                <select
-                  value={activeCategories}
-                  onChange={(e) => {
-                    if (e.target.value === "aces") {
-                      setCategories(acesCategories);
-                      setActiveCategories("aces");
-                    } else if (e.target.value === "user" && userCategories) {
-                      setCategories(userCategories);
-                      setActiveCategories("user");
-                    }
-                  }}
-                  className="px-2 py-1 text-xs border border-blue-300 rounded bg-white text-gray-700"
-                >
-                  <option value="aces">ACES Categories</option>
-                  <option value="user">User Categories</option>
-                </select>
+        {customCategoriesUploaded && categoriesFileInfo && (
+          <div className="mt-4 space-y-3">
+            {/* Active Tree Selection and Actions */}
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                  <span className="font-medium text-blue-900">
+                    User Category Tree Uploaded
+                  </span>
+                  <div className="flex items-center gap-2 ml-2">
+                    <label className="text-sm font-medium text-blue-800">
+                      Active:
+                    </label>
+                    <select
+                      value={activeCategories}
+                      onChange={(e) => {
+                        if (e.target.value === "aces") {
+                          dispatch(setReduxCategories(acesCategories));
+                          dispatch(setReduxActiveCategories("aces"));
+                        } else if (
+                          e.target.value === "user" &&
+                          userCategories
+                        ) {
+                          dispatch(setReduxCategories(userCategories));
+                          dispatch(setReduxActiveCategories("user"));
+                        }
+                      }}
+                      className="px-3 py-1.5 text-sm border-2 border-blue-300 rounded-lg bg-white text-gray-800 font-medium hover:border-blue-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                    >
+                      <option value="aces">ACES Categories</option>
+                      <option value="user">User Categories</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowCategoryModal(true)}
+                    className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md text-sm font-medium flex items-center gap-2"
+                  >
+                    <Eye className="w-4 h-4" />
+                    View Categories
+                  </button>
+
+                  <input
+                    ref={productFileInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleDirectProductUpload}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => productFileInputRef.current?.click()}
+                    className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm hover:shadow-md text-sm font-medium flex items-center gap-2"
+                  >
+                    <Upload className="w-4 h-4" />
+                    Upload Products
+                  </button>
+                </div>
               </div>
             </div>
-            <div className="space-x-3">
-              <button
-                onClick={() => setShowCategoryModal(true)}
-                className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md text-sm"
-              >
-                View Categories
-              </button>
 
-              <input
-                ref={productFileInputRef}
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleDirectProductUpload}
-                className="hidden"
-              />
-              <button
-                onClick={() => productFileInputRef.current?.click()}
-                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-sm hover:shadow-md text-sm"
-              >
-                Upload Products
-              </button>
+            {/* File Badges Section */}
+            <div className="mt-6 flex items-center gap-4 flex-wrap">
+              {/* Categories File Badge */}
+              {categoriesFileInfo && (
+                <div className="flex items-center gap-3 px-5 py-3 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl shadow-md hover:shadow-lg transition-all">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <Folder className="w-6 h-6 text-green-600" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-green-600 font-semibold uppercase tracking-wide">
+                      Categories File
+                    </span>
+                    <span className="text-sm text-gray-900 font-bold">
+                      {categoriesFileInfo.name}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => dispatch(clearCategories())}
+                    className="ml-3 p-2 hover:bg-red-100 rounded-full transition-all group"
+                    title="Remove categories"
+                  >
+                    <X className="w-5 h-5 text-gray-400 group-hover:text-red-600 transition-colors" />
+                  </button>
+                </div>
+              )}
+
+              {/* Products File Badge */}
+              {productsFileInfo && (
+                <div className="flex items-center gap-3 px-5 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl shadow-md hover:shadow-lg transition-all">
+                  <div className="p-2 bg-blue-100 rounded-lg">
+                    <Tag className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-blue-600 font-semibold uppercase tracking-wide">
+                      Products File
+                    </span>
+                    <span className="text-sm text-gray-900 font-bold">
+                      {productsFileInfo.name}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => dispatch(clearProducts())}
+                    className="ml-3 p-2 hover:bg-red-100 rounded-full transition-all group"
+                    title="Remove products"
+                  >
+                    <X className="w-5 h-5 text-gray-400 group-hover:text-red-600 transition-colors" />
+                  </button>
+                </div>
+              )}
+
+              {/* Upload to Supabase Button */}
+              {categoriesReadyForUpload && pendingCategoriesData && (
+                <button
+                  onClick={() =>
+                    saveCategoriesWithEmbeddings(pendingCategoriesData)
+                  }
+                  disabled={uploadingCategories}
+                  className={`flex items-center gap-3 px-6 py-3 rounded-xl text-base font-bold transition-all shadow-lg hover:shadow-xl ${
+                    uploadingCategories
+                      ? "bg-gray-400 cursor-not-allowed text-white"
+                      : "bg-blue-600 text-white hover:bg-blue-800"
+                  }`}
+                >
+                  {uploadingCategories ? (
+                    <>
+                      <span className="animate-spin text-xl">⏳</span>
+                      <span>Uploading to Supabase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-5 h-5" />
+                      <span>Upload to Supabase</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -723,19 +934,16 @@ const AcesPiesCategorizationTool = () => {
         </div>
       )}
 
+      {/* FileUpload area - always visible */}
       <FileUpload
         onFileUpload={handleFileUpload}
         isProcessing={isProcessing}
         onClearFile={() => {
-          setProducts([]);
-          setValidationResults(null);
+          dispatch(clearProducts());
           setCurrentPage(1);
         }}
         onClearCategories={() => {
-          setCategories(acesCategories);
-          setUserCategories(null);
-          setCustomCategoriesUploaded(false);
-          setActiveCategories("aces");
+          dispatch(clearCategories());
         }}
         customCategoriesUploaded={customCategoriesUploaded}
         externalFileInfo={lastUploadedFileInfo}
