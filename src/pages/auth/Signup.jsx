@@ -56,12 +56,7 @@ const Signup = () => {
           <div className="inline-flex items-center justify-center mb-4">
             <Logo />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Create Account
-          </h1>
-          <p className="text-gray-600">
-            Join us to start categorizing your products
-          </p>
+         
         </div>
 
         {/* Form Card */}

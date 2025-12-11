@@ -21,10 +21,11 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
         { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
         {
           icon: Upload,
-          label: "Categorize Products",
+          label: "Categorize tools",
           path: "/dashboard/categorize",
         },
-        { icon: FolderOpen, label: "My Products", path: "/dashboard/products" },
+        // { icon: FileText, label: "My Products", path: "/dashboard/export" },
+
       ],
     },
     {
@@ -38,7 +39,7 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
       title: "Management",
       items: [
         { icon: Tag, label: "Categories", path: "/dashboard/categories" },
-        { icon: FileText, label: "Export Data", path: "/dashboard/export" },
+        { icon: FolderOpen, label: "Products", path: "/dashboard/products" },
       ],
     },
     {

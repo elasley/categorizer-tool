@@ -44,10 +44,7 @@ const Login = () => {
           <div className="inline-flex items-center justify-center mb-4">
             <Logo />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Welcome Back
-          </h1>
-          <p className="text-gray-600">Sign in to continue to your dashboard</p>
+         
         </div>
 
         {/* Form Card */}

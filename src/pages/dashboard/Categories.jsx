@@ -36,6 +36,98 @@ const Categories = () => {
     partTypes: 0,
   });
 
+  // Modal state for adding new category, subcategory, or part type
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addType, setAddType] = useState("category"); // 'category', 'subcategory', 'parttype'
+  const [newCategory, setNewCategory] = useState("");
+  const [newSubcategory, setNewSubcategory] = useState("");
+  const [newPartType, setNewPartType] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [parentCategoryId, setParentCategoryId] = useState(null);
+  const [parentSubcategoryId, setParentSubcategoryId] = useState(null);
+
+  const handleOpenAddModal = (type, categoryId = null, subcategoryId = null) => {
+    setAddType(type);
+    setShowAddModal(true);
+    setNewCategory("");
+    setNewSubcategory("");
+    setNewPartType("");
+    setParentCategoryId(categoryId);
+    setParentSubcategoryId(subcategoryId);
+  };
+  const handleCloseAddModal = () => {
+    setShowAddModal(false);
+    setParentCategoryId(null);
+    setParentSubcategoryId(null);
+  };
+
+  const handleAdd = async () => {
+    setAdding(true);
+    try {
+      if (addType === "category") {
+        if (!newCategory.trim()) {
+          toast.error("Category name required");
+          setAdding(false);
+          return;
+        }
+        // Add category
+        const { data: cat, error: catErr } = await supabase
+          .from("categories")
+          .insert({ name: newCategory.trim() })
+          .select()
+          .single();
+        if (catErr) throw catErr;
+        let subcatId = null;
+        if (newSubcategory.trim()) {
+          // Add subcategory
+          const { data: subcat, error: subcatErr } = await supabase
+            .from("subcategories")
+            .insert({ name: newSubcategory.trim(), category_id: cat.id })
+            .select()
+            .single();
+          if (subcatErr) throw subcatErr;
+          subcatId = subcat.id;
+        }
+        if (newPartType.trim() && subcatId) {
+          // Add part type
+          const { error: ptErr } = await supabase
+            .from("parttypes")
+            .insert({ name: newPartType.trim(), subcategory_id: subcatId });
+          if (ptErr) throw ptErr;
+        }
+        toast.success("Category and related items added");
+      } else if (addType === "subcategory") {
+        if (!newSubcategory.trim() || !parentCategoryId) {
+          toast.error("Subcategory name required");
+          setAdding(false);
+          return;
+        }
+        const { error } = await supabase
+          .from("subcategories")
+          .insert({ name: newSubcategory.trim(), category_id: parentCategoryId });
+        if (error) throw error;
+        toast.success("Subcategory added");
+      } else if (addType === "parttype") {
+        if (!newPartType.trim() || !parentSubcategoryId) {
+          toast.error("Part type name required");
+          setAdding(false);
+          return;
+        }
+        const { error } = await supabase
+          .from("parttypes")
+          .insert({ name: newPartType.trim(), subcategory_id: parentSubcategoryId });
+        if (error) throw error;
+        toast.success("Part type added");
+      }
+      handleCloseAddModal();
+      loadAllData();
+    } catch (e) {
+      toast.error("Failed to add");
+    } finally {
+      setAdding(false);
+    }
+  };
+
   useEffect(() => {
     loadAllData();
   }, []);
@@ -264,26 +356,34 @@ const Categories = () => {
                   <h3 className="text-lg font-semibold text-gray-900">
                     All Categories
                   </h3>
-                  <button
-                    onClick={toggleExpandAll}
-                    className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${
-                      isAllExpanded
-                        ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        : "bg-blue-50 text-blue-600 hover:bg-blue-100"
-                    }`}
-                  >
-                    {isAllExpanded ? (
-                      <>
-                        <ChevronRight className="w-4 h-4" />
-                        Collapse All
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="w-4 h-4" />
-                        Expand All
-                      </>
-                    )}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={toggleExpandAll}
+                      className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${
+                        isAllExpanded
+                          ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          : "bg-blue-50 text-blue-600 hover:bg-blue-100"
+                      }`}
+                    >
+                      {isAllExpanded ? (
+                        <>
+                          <ChevronRight className="w-4 h-4" />
+                          Collapse All
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-4 h-4" />
+                          Expand All
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleOpenAddModal("category")}
+                      className="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" /> Add Category
+                    </button>
+                  </div>
                 </div>
                 {categories.length > 0 ? (
                   <div className="border border-gray-200 rounded-lg p-4 max-h-[600px] overflow-y-auto space-y-2">
@@ -371,6 +471,13 @@ const Categories = () => {
                                     title="Delete Category"
                                   >
                                     <Trash2 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenAddModal("subcategory", category.id, null)}
+                                    className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                                    title="Add Subcategory"
+                                  >
+                                    <Plus className="w-4 h-4" />
                                   </button>
                                 </div>
                               )}
@@ -477,6 +584,13 @@ const Categories = () => {
                                                 title="Delete Subcategory"
                                               >
                                                 <Trash2 className="w-4 h-4" />
+                                              </button>
+                                              <button
+                                                onClick={() => handleOpenAddModal("parttype", null, subcategory.id)}
+                                                className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                                                title="Add Part Type"
+                                              >
+                                                <Plus className="w-4 h-4" />
                                               </button>
                                             </div>
                                           )}
@@ -592,6 +706,93 @@ const Categories = () => {
               </div>
             </>
           )}
+        {/* Add Modal for Category, Subcategory, Part Type */}
+        {showAddModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+              <h3 className="text-lg font-bold mb-4">
+                {addType === "category" && "Add New Category"}
+                {addType === "subcategory" && "Add New Subcategory"}
+                {addType === "parttype" && "Add New Part Type"}
+              </h3>
+              {addType === "category" && (
+                <>
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium mb-1">Category Name</label>
+                    <input
+                      type="text"
+                      className="w-full border px-3 py-2 rounded-lg"
+                      value={newCategory}
+                      onChange={e => setNewCategory(e.target.value)}
+                      placeholder="Enter category name"
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium mb-1">Subcategory Name</label>
+                    <input
+                      type="text"
+                      className="w-full border px-3 py-2 rounded-lg"
+                      value={newSubcategory}
+                      onChange={e => setNewSubcategory(e.target.value)}
+                      placeholder="Enter subcategory name"
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium mb-1">Part Type </label>
+                    <input
+                      type="text"
+                      className="w-full border px-3 py-2 rounded-lg"
+                      value={newPartType}
+                      onChange={e => setNewPartType(e.target.value)}
+                      placeholder="Enter part type"
+                      disabled={!newSubcategory.trim()}
+                    />
+                  </div>
+                </>
+              )}
+              {addType === "subcategory" && (
+                <div className="mb-3">
+                  <label className="block text-sm font-medium mb-1">Subcategory Name</label>
+                  <input
+                    type="text"
+                    className="w-full border px-3 py-2 rounded-lg"
+                    value={newSubcategory}
+                    onChange={e => setNewSubcategory(e.target.value)}
+                    placeholder="Enter subcategory name"
+                  />
+                </div>
+              )}
+              {addType === "parttype" && (
+                <div className="mb-3">
+                  <label className="block text-sm font-medium mb-1">Part Type Name</label>
+                  <input
+                    type="text"
+                    className="w-full border px-3 py-2 rounded-lg"
+                    value={newPartType}
+                    onChange={e => setNewPartType(e.target.value)}
+                    placeholder="Enter part type name"
+                  />
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={handleCloseAddModal}
+                  className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  disabled={adding}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAdd}
+                  className="px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600"
+                  disabled={adding}
+                >
+                  {adding ? "Adding..." : "Add"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         </div>
       </div>
     </div>
