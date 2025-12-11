@@ -43,6 +43,9 @@ import {
   estimateOpenAICost,
 } from "../utils/openaiCategorizer";
 import { acesCategories } from "../data/acesCategories";
+import { supabase } from "../config/supabase";
+import { generateCategoryEmbedding } from "../utils/embeddingUtils";
+import toast from "react-hot-toast";
 
 const AcesPiesCategorizationTool = () => {
   const [products, setProducts] = useState([]);
@@ -128,8 +131,87 @@ const AcesPiesCategorizationTool = () => {
     totalBatches: 0,
   });
   const [estimatedCost, setEstimatedCost] = useState(null);
+  const [uploadingCategories, setUploadingCategories] = useState(false);
 
   const itemsPerPage = 50;
+
+  // Save categories to Supabase with NLP embeddings
+  const saveCategoriesWithEmbeddings = async (categoriesData) => {
+    setUploadingCategories(true);
+    const loadingToast = toast.loading(
+      "Generating embeddings and saving categories..."
+    );
+
+    try {
+      const categoriesToInsert = [];
+
+      // Convert nested category object to flat array
+      Object.entries(categoriesData).forEach(([category, subcategories]) => {
+        if (subcategories && typeof subcategories === "object") {
+          Object.entries(subcategories).forEach(([subcategory, partTypes]) => {
+            if (Array.isArray(partTypes)) {
+              partTypes.forEach((partType) => {
+                // Generate embedding for each category entry
+                const embedding = generateCategoryEmbedding(
+                  category,
+                  subcategory,
+                  partType
+                );
+
+                categoriesToInsert.push({
+                  category: category,
+                  subcategory: subcategory,
+                  part_type: partType,
+                  embedding: embedding,
+                });
+              });
+            }
+          });
+        }
+      });
+
+      if (categoriesToInsert.length === 0) {
+        toast.error("No valid categories to save", { id: loadingToast });
+        return;
+      }
+
+      // Insert in batches to avoid payload size limits
+      const batchSize = 100;
+      let totalInserted = 0;
+
+      for (let i = 0; i < categoriesToInsert.length; i += batchSize) {
+        const batch = categoriesToInsert.slice(i, i + batchSize);
+
+        const { data, error } = await supabase
+          .from("categories")
+          .insert(batch)
+          .select();
+
+        if (error) {
+          console.error("Supabase insert error:", error);
+          throw error;
+        }
+
+        totalInserted += batch.length;
+        toast.loading(
+          `Saved ${totalInserted}/${categoriesToInsert.length} categories...`,
+          { id: loadingToast }
+        );
+      }
+
+      toast.success(
+        `Successfully saved ${totalInserted} categories with embeddings!`,
+        { id: loadingToast }
+      );
+    } catch (error) {
+      console.error("Error saving categories:", error);
+      toast.error(`Failed to save categories: ${error.message}`, {
+        id: loadingToast,
+      });
+    } finally {
+      setUploadingCategories(false);
+    }
+  };
 
   React.useEffect(() => {
     if (products.length > 0 && useOpenAI) {
@@ -157,6 +239,10 @@ const AcesPiesCategorizationTool = () => {
       if (!parsedData || Object.keys(parsedData).length === 0) {
         return;
       }
+
+      // Save categories to Supabase with embeddings
+      await saveCategoriesWithEmbeddings(parsedData);
+
       setUserCategories(parsedData);
       setCategories(parsedData);
       setCustomCategoriesUploaded(true);
