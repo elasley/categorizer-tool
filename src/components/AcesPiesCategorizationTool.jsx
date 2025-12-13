@@ -31,18 +31,10 @@ import StatsPanel from "./StatsPanel";
 import AdvancedSettings from "./AdvancedSettings";
 import TaxonomyManager from "./TaxonomyManager";
 import BulkAssignmentTool from "./BulkAssignmentTool";
+import UploadToSupabaseModal from "./UploadToSupabaseModal";
 
 import { parseCSV, validateCSV, exportToCSV } from "../utils/csvParser";
-import {
-  batchCategorize,
-  getCategoryMappingStats,
-} from "../utils/categoryMatcher";
 import { parseCategoryCSV, validateCategoryCSV } from "../utils/csvParser";
-
-import {
-  batchCategorizeWithOpenAI,
-  estimateOpenAICost,
-} from "../utils/openaiCategorizer";
 import { acesCategories } from "../data/acesCategories";
 import { supabase } from "../config/supabase";
 import { generateCategoryEmbedding } from "../utils/embeddingUtils";
@@ -111,6 +103,7 @@ const AcesPiesCategorizationTool = () => {
 
   // Local UI state (not persisted)
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
   const productFileInputRef = useRef(null);
 
   // Track expanded categories/subcategories in the Category modal
@@ -168,7 +161,6 @@ const AcesPiesCategorizationTool = () => {
   const [selectedCategory, setSelectedCategory] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isPreparingAI, setIsPreparingAI] = useState(false);
   const [apiError, setApiError] = useState(null);
   const [lastUploadedFileInfo, setLastUploadedFileInfo] = useState(null);
   const [lastUploadType, setLastUploadType] = useState(null);
@@ -178,14 +170,6 @@ const AcesPiesCategorizationTool = () => {
   const [showBulkAssignmentTool, setShowBulkAssignmentTool] = useState(false);
 
   const [confidenceThreshold, setConfidenceThreshold] = useState(70);
-  const [useOpenAI, setUseOpenAI] = useState(false);
-  const [processingProgress, setProcessingProgress] = useState({
-    current: 0,
-    total: 0,
-    currentBatch: 0,
-    totalBatches: 0,
-  });
-  const [estimatedCost, setEstimatedCost] = useState(null);
 
   const itemsPerPage = 50;
 
@@ -193,40 +177,76 @@ const AcesPiesCategorizationTool = () => {
   const saveCategoriesWithEmbeddings = async (categoriesData) => {
     dispatch(setReduxUploadingCategories(true));
     const loadingToast = toast.loading(
-      "Generating embeddings and saving to Supabase..."
+      "🚀 Starting category upload with vector embeddings..."
     );
 
     try {
+      console.log("\n═══════════════════════════════════════════════════");
+      console.log("🎯 CATEGORY UPLOAD WITH VECTOR EMBEDDINGS");
+      console.log("═══════════════════════════════════════════════════\n");
+
       let totalInserted = 0;
       const categoryMap = new Map(); // categoryName -> categoryId
       const subcategoryMap = new Map(); // `${categoryId}_${subcategoryName}` -> subcategoryId
 
-      // Step 1: Insert Categories
+      // Step 1: BULK Insert Categories
       const uniqueCategories = [...new Set(Object.keys(categoriesData))];
 
-      for (const categoryName of uniqueCategories) {
-        const embedding = generateCategoryEmbedding(categoryName, "", "");
-
-        const { data, error } = await supabase
-          .from("categories")
-          .insert({ name: categoryName, embedding })
-          .select("id, name")
-          .single();
-
-        if (error) {
-          console.error("Error inserting category:", error);
-          throw error;
+      console.log(
+        `📁 Step 1: Bulk inserting ${uniqueCategories.length} categories...`
+      );
+      toast.loading(
+        `📁 Bulk inserting ${uniqueCategories.length} categories...`,
+        {
+          id: loadingToast,
         }
+      );
 
-        categoryMap.set(categoryName, data.id);
-        totalInserted++;
+      // Prepare all categories with embeddings
+      const categoriesWithEmbeddings = uniqueCategories.map((categoryName) => {
+        console.log(`\n📁 Category: ${categoryName}`);
+        const embedding = generateCategoryEmbedding(categoryName, "", "", true);
+        // Convert to pgvector format: [0.1,0.2,0.3]
+        const embeddingStr = `[${embedding.join(",")}]`;
+        return { name: categoryName, embedding: embeddingStr };
+      });
+
+      // SINGLE bulk insert for all categories
+      const { data: insertedCategories, error: catError } = await supabase
+        .from("categories")
+        .insert(categoriesWithEmbeddings)
+        .select("id, name");
+
+      if (catError) {
+        console.error("❌ Error bulk inserting categories:", catError);
+        throw catError;
       }
 
-      toast.loading(`Saved ${totalInserted} categories...`, {
+      // Map category names to IDs
+      insertedCategories.forEach((cat) => {
+        categoryMap.set(cat.name, cat.id);
+      });
+
+      totalInserted += insertedCategories.length;
+      console.log(
+        `\n✅ Step 1 Complete: ${insertedCategories.length} categories saved in 1 API call\n`
+      );
+      toast.loading(
+        `✅ ${insertedCategories.length} categories saved, processing subcategories...`,
+        {
+          id: loadingToast,
+        }
+      );
+
+      // Step 2: BULK Insert Subcategories
+      console.log(`📂 Step 2: Preparing subcategories for bulk insert...`);
+      toast.loading(`📂 Preparing subcategories for bulk insert...`, {
         id: loadingToast,
       });
 
-      // Step 2: Insert Subcategories
+      const subcategoriesWithEmbeddings = [];
+      const subcategoryKeys = []; // To track mapping
+
       for (const [categoryName, subcategories] of Object.entries(
         categoriesData
       )) {
@@ -234,36 +254,60 @@ const AcesPiesCategorizationTool = () => {
 
         if (subcategories && typeof subcategories === "object") {
           for (const subcategoryName of Object.keys(subcategories)) {
+            console.log(`\n📂 ${categoryName} > ${subcategoryName}`);
             const embedding = generateCategoryEmbedding(
               categoryName,
               subcategoryName,
-              ""
+              "",
+              true
             );
+            // Convert to pgvector format
+            const embeddingStr = `[${embedding.join(",")}]`;
 
-            const { data, error } = await supabase
-              .from("subcategories")
-              .insert({
-                category_id: categoryId,
-                name: subcategoryName,
-                embedding,
-              })
-              .select("id, name")
-              .single();
+            subcategoriesWithEmbeddings.push({
+              category_id: categoryId,
+              name: subcategoryName,
+              embedding: embeddingStr,
+            });
 
-            if (error) {
-              console.error("Error inserting subcategory:", error);
-              throw error;
-            }
-
-            subcategoryMap.set(`${categoryId}_${subcategoryName}`, data.id);
-            totalInserted++;
+            subcategoryKeys.push({ categoryId, categoryName, subcategoryName });
           }
         }
       }
 
-      toast.loading(`Saved subcategories...`, { id: loadingToast });
+      // SINGLE bulk insert for all subcategories
+      const { data: insertedSubcategories, error: subError } = await supabase
+        .from("subcategories")
+        .insert(subcategoriesWithEmbeddings)
+        .select("id, name, category_id");
 
-      // Step 3: Insert Part Types
+      if (subError) {
+        console.error("❌ Error bulk inserting subcategories:", subError);
+        throw subError;
+      }
+
+      // Map subcategories to IDs
+      insertedSubcategories.forEach((sub) => {
+        subcategoryMap.set(`${sub.category_id}_${sub.name}`, sub.id);
+      });
+
+      totalInserted += insertedSubcategories.length;
+      console.log(
+        `\n✅ Step 2 Complete: ${insertedSubcategories.length} subcategories saved in 1 API call\n`
+      );
+      toast.loading(
+        `✅ ${insertedSubcategories.length} subcategories saved, processing part types...`,
+        { id: loadingToast }
+      );
+
+      // Step 3: BULK Insert Part Types
+      console.log(`🏷️  Step 3: Preparing part types for bulk insert...`);
+      toast.loading(`🏷️  Preparing part types for bulk insert...`, {
+        id: loadingToast,
+      });
+
+      const parttypesWithEmbeddings = [];
+
       for (const [categoryName, subcategories] of Object.entries(
         categoriesData
       )) {
@@ -279,43 +323,68 @@ const AcesPiesCategorizationTool = () => {
 
             if (Array.isArray(partTypes)) {
               for (const partTypeName of partTypes) {
+                console.log(
+                  `\n🏷️  ${categoryName} > ${subcategoryName} > ${partTypeName}`
+                );
                 const embedding = generateCategoryEmbedding(
                   categoryName,
                   subcategoryName,
-                  partTypeName
+                  partTypeName,
+                  true
                 );
+                // Convert to pgvector format
+                const embeddingStr = `[${embedding.join(",")}]`;
 
-                const { error } = await supabase.from("parttypes").insert({
+                parttypesWithEmbeddings.push({
                   subcategory_id: subcategoryId,
                   name: partTypeName,
-                  embedding,
+                  embedding: embeddingStr,
                 });
-
-                if (error) {
-                  console.error("Error inserting part type:", error);
-                  throw error;
-                }
-
-                totalInserted++;
               }
             }
           }
         }
       }
 
+      // SINGLE bulk insert for all part types
+      const { data: insertedParttypes, error: ptError } = await supabase
+        .from("parttypes")
+        .insert(parttypesWithEmbeddings)
+        .select("id");
+
+      if (ptError) {
+        console.error("❌ Error bulk inserting part types:", ptError);
+        throw ptError;
+      }
+
+      totalInserted += insertedParttypes.length;
+      console.log(
+        `\n✅ Step 3 Complete: ${insertedParttypes.length} part types saved in 1 API call\n`
+      );
+      console.log("═══════════════════════════════════════════════════");
+      console.log(`🎉 UPLOAD COMPLETE: ${totalInserted} total items saved`);
+      console.log(`   📊 API Calls Made: 3 (instead of ${totalInserted})`);
+      console.log("   - Categories: " + insertedCategories.length);
+      console.log("   - Subcategories: " + insertedSubcategories.length);
+      console.log("   - Part Types: " + insertedParttypes.length);
+      console.log("═══════════════════════════════════════════════════\n");
+
       toast.success(
-        `Successfully saved ${totalInserted} items (categories, subcategories, and part types) to Supabase!`,
-        { id: loadingToast }
+        `✅ Successfully saved ${totalInserted} items in just 3 API calls!\n📁 ${insertedCategories.length} categories | 📂 ${insertedSubcategories.length} subcategories | 🏷️  ${insertedParttypes.length} part types`,
+        { id: loadingToast, duration: 5000 }
       );
 
-      // Clear all category upload states to hide the upload notification
+      // Clear only the upload button state, but keep the header visible
       dispatch(setReduxCategoriesReadyForUpload(false));
       dispatch(setReduxPendingCategoriesData(null));
-      dispatch(setCategoriesFileInfo(null));
-      dispatch(setReduxCustomCategoriesUploaded(false));
-      dispatch(setReduxUserCategories(null));
-      dispatch(setReduxActiveCategories("aces"));
-      dispatch(setReduxCategories(acesCategories));
+      // Keep categoriesFileInfo and customCategoriesUploaded to show the header
+      // dispatch(setCategoriesFileInfo(null));
+      // dispatch(setReduxCustomCategoriesUploaded(false));
+      // Keep userCategories so user can switch between ACES and User categories
+      // dispatch(setReduxUserCategories(null));
+      // Keep active categories as "user" since they just uploaded user categories
+      dispatch(setReduxActiveCategories("user"));
+      dispatch(setReduxCategories(userCategories || acesCategories));
 
       // Clear local state to hide file upload notification
       setLastUploadedFileInfo(null);
@@ -330,28 +399,124 @@ const AcesPiesCategorizationTool = () => {
     }
   };
 
-  // Upload products to Supabase
-  const uploadProductsToSupabase = async () => {
+  // Upload products to Supabase with file storage
+  const uploadProductsToSupabase = async (uploadMetadata) => {
     if (!products || products.length === 0) {
       toast.error("No products to upload");
       return;
     }
 
     console.log("Starting product upload. Total products:", products.length);
-    console.log("Sample product to upload:", products[0]);
+    console.log("Upload metadata:", uploadMetadata);
 
     dispatch(setReduxUploadingProducts(true));
     const loadingToast = toast.loading("Uploading products to Supabase...");
 
+    let uploadHistoryId = null;
+    let fileUrl = null;
+
     try {
+      // Step 1: Create CSV content from products
+      const csvHeaders = [
+        "Name",
+        "Description",
+        "SKU",
+        "Category",
+        "Subcategory",
+        "Part Type",
+        "Confidence",
+      ];
+      const csvRows = products.map((p) => [
+        p.name || p.productName || "",
+        p.description || "",
+        p.sku || p.partNumber || "",
+        p.suggestedCategory || p.originalCategory || "",
+        p.suggestedSubcategory || p.originalSubcategory || "",
+        p.suggestedPartType || p.originalPartType || "",
+        p.confidence || "",
+      ]);
+
+      const csvContent = [
+        csvHeaders.join(","),
+        ...csvRows.map((row) =>
+          row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+        ),
+      ].join("\n");
+
+      const blob = new Blob([csvContent], { type: "text/csv" });
+      const fileName = uploadMetadata.fileName.endsWith(".csv")
+        ? uploadMetadata.fileName
+        : `${uploadMetadata.fileName}.csv`;
+
+      // Step 2: Upload file to Supabase Storage
+      toast.loading("Uploading file to storage...", { id: loadingToast });
+      const filePath = `${Date.now()}-${fileName}`;
+
+      const { data: fileData, error: fileError } = await supabase.storage
+        .from("product-uploads")
+        .upload(filePath, blob, {
+          contentType: "text/csv",
+          upsert: false,
+        });
+
+      if (fileError)
+        throw new Error(`File upload failed: ${fileError.message}`);
+
+      fileUrl = filePath;
+      console.log("✅ File uploaded to storage:", fileUrl);
+
+      // Step 3: Get current user
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      // Step 4: Create upload history record
+      toast.loading("Creating upload record...", { id: loadingToast });
+      const { data: historyData, error: historyError } = await supabase
+        .from("upload_history")
+        .insert({
+          user_id: user?.id || "anonymous",
+          file_name: fileName,
+          file_url: fileUrl,
+          description: uploadMetadata.description || null,
+          products_count: products.length,
+          status: "processing",
+        })
+        .select()
+        .single();
+
+      if (historyError)
+        throw new Error(`History record failed: ${historyError.message}`);
+
+      uploadHistoryId = historyData.id;
+      console.log("✅ Upload history created:", uploadHistoryId);
+
+      // Step 5: Upload products to database
+      toast.loading("Uploading products to database...", { id: loadingToast });
+
       let successCount = 0;
       let errorCount = 0;
       const errors = [];
 
       for (const product of products) {
+        // Get product name - MUST NOT BE NULL
+        const productName =
+          product.name ||
+          product.productName ||
+          product.title ||
+          `Product-${Date.now()}`;
+
+        // Skip if essential data is missing
+        if (!productName || productName.trim() === "") {
+          console.warn("Skipping product with no name:", product);
+          errorCount++;
+          errors.push("Product has no name");
+          continue;
+        }
+
         // Generate embedding for product
         const embedding = generateCategoryEmbedding(
-          product.name || "",
+          productName,
           product.description || "",
           ""
         );
@@ -371,7 +536,7 @@ const AcesPiesCategorizationTool = () => {
           .single();
 
         if (catErr) {
-          const errorMsg = `Category not found: "${categoryName}" for product: ${product.name}`;
+          const errorMsg = `Category not found: "${categoryName}" for product: ${productName}`;
           console.error(errorMsg, catErr);
           errors.push(errorMsg);
           errorCount++;
@@ -386,7 +551,7 @@ const AcesPiesCategorizationTool = () => {
           .single();
 
         if (subErr) {
-          const errorMsg = `Subcategory not found: "${subcategoryName}" in "${categoryName}" for product: ${product.name}`;
+          const errorMsg = `Subcategory not found: "${subcategoryName}" in "${categoryName}" for product: ${productName}`;
           console.error(errorMsg, subErr);
           errors.push(errorMsg);
           errorCount++;
@@ -401,7 +566,7 @@ const AcesPiesCategorizationTool = () => {
           .single();
 
         if (ptErr) {
-          const errorMsg = `Parttype not found: "${parttypeName}" in "${subcategoryName}" for product: ${product.name}`;
+          const errorMsg = `Parttype not found: "${parttypeName}" in "${subcategoryName}" for product: ${productName}`;
           console.error(errorMsg, ptErr);
           errors.push(errorMsg);
           errorCount++;
@@ -409,27 +574,30 @@ const AcesPiesCategorizationTool = () => {
         }
 
         if (!categoryData || !subcategoryData || !parttypeData) {
-          const errorMsg = `Missing category data for product: ${product.name} (cat: ${categoryName}, sub: ${subcategoryName}, pt: ${parttypeName})`;
+          const errorMsg = `Missing category data for product: ${productName} (cat: ${categoryName}, sub: ${subcategoryName}, pt: ${parttypeName})`;
           console.error(errorMsg);
           errors.push(errorMsg);
           errorCount++;
           continue;
         }
 
-        // Insert product
+        // Insert product with file reference - name is REQUIRED and cannot be null
         const { error } = await supabase.from("products").insert({
-          name: product.name || product.productName,
+          name: productName, // This is guaranteed to be non-null from the check above
           description: product.description || "",
           sku: product.sku || product.partNumber || null,
           category_id: categoryData.id,
           subcategory_id: subcategoryData.id,
           parttype_id: parttypeData.id,
+          upload_history_id: uploadHistoryId,
+          file_url: fileUrl,
           embedding,
         });
 
         if (error) {
           console.error("Error inserting product:", error);
           errorCount++;
+          errors.push(error.message);
         } else {
           successCount++;
         }
@@ -442,94 +610,198 @@ const AcesPiesCategorizationTool = () => {
         console.log("First 5 errors:", errors.slice(0, 5));
       }
 
-      if (successCount > 0) {
-        toast.success(
-          `Successfully uploaded ${successCount} products to Supabase!${
-            errorCount > 0 ? ` (${errorCount} failed)` : ""
-          }`,
-          { id: loadingToast }
-        );
-      } else {
-        toast.error(
-          `Failed to upload products: ${errorCount} errors. Check console for details.`,
-          {
-            id: loadingToast,
-          }
-        );
+      // Update upload history with final status
+      const finalStatus = successCount > 0 ? "success" : "failed";
+      const errorMessage =
+        errorCount > 0 ? errors.slice(0, 5).join("; ") : null;
+
+      if (uploadHistoryId) {
+        await supabase
+          .from("upload_history")
+          .update({
+            status: finalStatus,
+            products_count: successCount,
+            error_message: errorMessage,
+          })
+          .eq("id", uploadHistoryId);
       }
 
-      // Clear products state after successful upload
       if (successCount > 0) {
+        toast.success(
+          `✅ Successfully uploaded ${successCount} products!${
+            errorCount > 0 ? ` (${errorCount} failed)` : ""
+          }`,
+          { id: loadingToast, duration: 5000 }
+        );
+
+        // Clear products state after successful upload
         dispatch(setReduxProductsReadyForUpload(false));
         dispatch(setReduxProducts([]));
-        dispatch(setProductsFileInfo(null));
+        setProductsFileInfo(null);
         setLastUploadedFileInfo(null);
         setLastUploadType(null);
+      } else {
+        toast.error(
+          `❌ Failed to upload: ${errorCount} errors. Check console for details.`,
+          { id: loadingToast }
+        );
       }
     } catch (error) {
       console.error("Error uploading products:", error);
+
+      // Update upload history if it was created
+      if (uploadHistoryId) {
+        await supabase
+          .from("upload_history")
+          .update({
+            status: "failed",
+            error_message: error.message,
+          })
+          .eq("id", uploadHistoryId);
+      }
+
+      // Clean up uploaded file if product insertion failed
+      if (fileUrl && uploadHistoryId) {
+        console.log("Cleaning up uploaded file due to error...");
+        await supabase.storage.from("product-uploads").remove([fileUrl]);
+      }
+
       toast.error(`Failed to upload products: ${error.message}`, {
         id: loadingToast,
+        duration: 6000,
       });
     } finally {
       dispatch(setReduxUploadingProducts(false));
     }
   };
 
-  // Assign categories using edge function (embedding-based)
+  // Assign categories using edge function (professional vector-based approach)
   const assignCategoriesViaEdgeFunction = async () => {
     if (!products || products.length === 0) {
       toast.error("No products to categorize");
       return;
     }
 
-    console.log("=== CALLING EDGE FUNCTION ===");
-    console.log("Total products to categorize:", products.length);
-    console.log("Sample product before mapping:", products[0]);
+    const BATCH_SIZE = 500; // Match edge function limit
+    const totalProducts = products.length;
 
-    const productsToSend = products.map((p) => ({
-      id: p.id,
-      name: p.name || p.productName,
+    console.log("\n🔄 Preparing products for vector categorization...");
+    console.log(`📦 Total products: ${totalProducts}`);
+
+    const productsToSend = products.map((p, index) => ({
+      id: p.id || `product-${index}`,
+      name: p.name || p.productName || "",
       description: p.description || "",
     }));
 
-    console.log("Products being sent to edge function:", productsToSend.length);
-    console.log("Sample product after mapping:", productsToSend[0]);
-
     setIsProcessing(true);
+
+    // Check if batching is needed
+    const needsBatching = totalProducts > BATCH_SIZE;
+    const totalBatches = Math.ceil(totalProducts / BATCH_SIZE);
+
+    if (needsBatching) {
+      console.log(
+        `⚡ Large dataset detected. Processing in ${totalBatches} batches of ${BATCH_SIZE}`
+      );
+    }
+
     const loadingToast = toast.loading(
-      "Assigning categories using embeddings..."
+      needsBatching
+        ? `🚀 Categorizing ${totalProducts} products in ${totalBatches} batches...`
+        : `🚀 Categorizing ${totalProducts} products using vector similarity...`
     );
 
     try {
-      // Call Supabase edge function to assign categories
-      const { data, error } = await supabase.functions.invoke(
-        "assign-categories",
-        {
-          body: {
-            products: productsToSend,
-          },
+      let allCategorizedProducts = [];
+
+      // Process in batches if needed
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        const start = batchIndex * BATCH_SIZE;
+        const end = Math.min(start + BATCH_SIZE, totalProducts);
+        const batch = productsToSend.slice(start, end);
+
+        if (needsBatching) {
+          console.log(
+            `\n🔄 Batch ${
+              batchIndex + 1
+            }/${totalBatches}: Processing products ${start + 1}-${end}`
+          );
+          toast.loading(
+            `🔄 Batch ${batchIndex + 1}/${totalBatches}: ${
+              start + 1
+            }-${end} of ${totalProducts}`,
+            { id: loadingToast }
+          );
         }
-      );
 
-      console.log("Edge function response:", { data, error });
+        const startTime = Date.now();
 
-      if (error) {
-        console.error("Edge function error:", error);
-        throw error;
+        // Call Supabase edge function to assign categories
+        const { data, error } = await supabase.functions.invoke(
+          "assign-categories",
+          {
+            body: {
+              products: batch,
+            },
+          }
+        );
+
+        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+        if (error) {
+          console.error(`❌ Batch ${batchIndex + 1} failed:`, error);
+          throw error;
+        }
+
+        if (data && data.categorizedProducts) {
+          allCategorizedProducts = [
+            ...allCategorizedProducts,
+            ...data.categorizedProducts,
+          ];
+          console.log(
+            `✅ Batch ${batchIndex + 1} completed in ${duration}s (${
+              data.categorizedProducts.length
+            } products)`
+          );
+        }
       }
 
-      if (data && data.categorizedProducts) {
+      // Combine all batch results
+      const finalData = { categorizedProducts: allCategorizedProducts };
+
+      if (finalData && finalData.categorizedProducts) {
+        const categorized = finalData.categorizedProducts;
+        console.log(`\n✅ Received ${categorized.length} categorized products`);
         console.log(
-          "Categorized products received:",
-          data.categorizedProducts.length
+          `   Success rate: ${(
+            (categorized.length / products.length) *
+            100
+          ).toFixed(1)}%`
         );
-        console.log("Sample categorized product:", data.categorizedProducts[0]);
+
+        if (categorized.length > 0) {
+          console.log("\n📋 Sample result:", categorized[0]);
+
+          // Calculate confidence stats
+          const confidences = categorized.map((p) => p.confidence || 0);
+          const avgConfidence = (
+            confidences.reduce((a, b) => a + b, 0) / confidences.length
+          ).toFixed(1);
+          const highConfCount = confidences.filter((c) => c >= 70).length;
+
+          console.log(`\n📊 Categorization Stats:`);
+          console.log(`   Average confidence: ${avgConfidence}%`);
+          console.log(
+            `   High confidence (≥70%): ${highConfCount}/${categorized.length}`
+          );
+        }
 
         // Update products with assigned categories
         const updatedProducts = products.map((product) => {
-          const assigned = data.categorizedProducts.find(
-            (p) => p.id === product.id
+          const assigned = categorized.find(
+            (p) =>
+              p.id === (product.id || `product-${products.indexOf(product)}`)
           );
           if (assigned) {
             return {
@@ -537,28 +809,38 @@ const AcesPiesCategorizationTool = () => {
               suggestedCategory: assigned.category,
               suggestedSubcategory: assigned.subcategory,
               suggestedPartType: assigned.partType,
-              confidence: assigned.confidence || 80,
-              status: "high-confidence",
+              confidence: assigned.confidence || 70,
+              status:
+                (assigned.confidence || 70) >= 70
+                  ? "high-confidence"
+                  : "low-confidence",
             };
           }
           return product;
         });
 
-        console.log("Updated products count:", updatedProducts.length);
-        console.log("Sample updated product:", updatedProducts[0]);
+        console.log(
+          `✅ Updated ${updatedProducts.length} products with categories\n`
+        );
 
         dispatch(setReduxProducts(updatedProducts));
         dispatch(setReduxProductsReadyForUpload(true));
 
+        const highConf = updatedProducts.filter(
+          (p) => (p.confidence || 0) >= 70
+        ).length;
         toast.success(
-          `Successfully assigned categories to ${data.categorizedProducts.length} products!`,
-          { id: loadingToast }
+          `✅ Categorized ${categorized.length} products! (${highConf} high confidence)`,
+          { id: loadingToast, duration: 4000 }
         );
+      } else {
+        throw new Error("No categorized products returned from edge function");
       }
     } catch (error) {
-      console.error("Error assigning categories:", error);
+      console.error("❌ Categorization failed:", error);
       toast.error(`Failed to assign categories: ${error.message}`, {
         id: loadingToast,
+        duration: 5000,
       });
     } finally {
       setIsProcessing(false);
@@ -666,14 +948,7 @@ const AcesPiesCategorizationTool = () => {
     }
   }, []); // Run only once on mount
 
-  React.useEffect(() => {
-    if (products.length > 0 && useOpenAI) {
-      const costEstimate = estimateOpenAICost(products.length);
-      setEstimatedCost(costEstimate);
-    } else {
-      setEstimatedCost(null);
-    }
-  }, [products.length, useOpenAI]);
+  // Cost estimation removed - using efficient vector similarity (no external API costs)
 
   // Reset expansion when modal opens or when categories change
   React.useEffect(() => {
@@ -702,8 +977,9 @@ const AcesPiesCategorizationTool = () => {
       dispatch(setReduxActiveCategories("user"));
       dispatch(setReduxValidationResults(validation));
       dispatch(setCategoriesFileInfo({ name: filename, type: "text/csv" }));
-      setLastUploadedFileInfo({ name: filename, type: "text/csv" });
-      setLastUploadType("categories");
+      // Don't set lastUploadedFileInfo for categories - we don't want to show it in FileUpload badge
+      // setLastUploadedFileInfo({ name: filename, type: "text/csv" });
+      // setLastUploadType("categories");
     } else {
       if (!parsedData || parsedData.length === 0) {
         return;
@@ -754,181 +1030,19 @@ const AcesPiesCategorizationTool = () => {
       return;
     }
 
-    console.log(
-      "Categorizing with:",
-      activeCategories === "user" ? "User Categories" : "ACES Categories"
-    );
-    console.log("Current categories:", categories);
+    console.log("\n═══════════════════════════════════════════════════");
+    console.log("🤖 PRODUCT CATEGORIZATION - VECTOR-BASED");
+    console.log("═══════════════════════════════════════════════════");
+    console.log("📊 Products to categorize:", products.length);
+    console.log("🎯 Using: Vector Similarity Search (Edge Function)");
+    console.log("═══════════════════════════════════════════════════\n");
 
-    if (useOpenAI) {
-      return handleOpenAICategorization();
-    } else {
-      return handleLocalCategorization();
-    }
+    // Always use edge function for vector-based categorization
+    return assignCategoriesViaEdgeFunction();
   };
 
-  const handleOpenAICategorization = async () => {
-    if (!process.env.REACT_APP_OPENAI_API_KEY) {
-      alert(
-        "OpenAI API key is required. Please add REACT_APP_OPENAI_API_KEY to your .env file."
-      );
-      return;
-    }
-
-    if (estimatedCost && estimatedCost.estimatedCost > 5) {
-      const confirmed = window.confirm(
-        `OpenAI categorization will cost approximately $${estimatedCost.estimatedCost.toFixed(
-          2
-        )} for ${products.length} products. Continue?`
-      );
-      if (!confirmed) return;
-    }
-
-    setIsPreparingAI(true);
-    setIsProcessing(true);
-    setProcessingProgress({
-      current: 0,
-      total: products.length,
-      currentBatch: 0,
-      totalBatches: 0,
-    });
-
-    try {
-      const aiResponse = await batchCategorizeWithOpenAI(
-        products,
-        (processedProducts, totalProducts, currentBatch, totalBatches) => {
-          setProcessingProgress({
-            current: processedProducts,
-            total: totalProducts,
-            currentBatch,
-            totalBatches,
-          });
-        },
-        categories
-      );
-
-      // batchCategorizeWithOpenAI now returns { results, stats } when using AI
-      const categorizedProducts = Array.isArray(aiResponse)
-        ? aiResponse
-        : aiResponse.results || [];
-
-      const stats = aiResponse.stats || null;
-      if (stats) {
-        console.info("AI stats:", stats);
-      }
-
-      const updatedProducts = categorizedProducts.map((product) => {
-        let status = "low-confidence";
-        if (product.confidence > confidenceThreshold) {
-          status = "high-confidence";
-        } else if (product.confidence > 40) {
-          status = "needs-review";
-        }
-
-        return {
-          ...product,
-          status,
-          // Always use the AI-suggested fields, not the uploaded file's original fields
-          suggestedCategory: product.suggestedCategory,
-          suggestedSubcategory: product.suggestedSubcategory,
-          suggestedPartType: product.suggestedPartType,
-          // Preserve original categories from import
-          originalCategory:
-            product.originalCategory || product.suggestedCategory,
-          originalSubcategory:
-            product.originalSubcategory || product.suggestedSubcategory,
-          originalPartType:
-            product.originalPartType || product.suggestedPartType,
-        };
-      });
-
-      dispatch(setReduxProducts(updatedProducts));
-    } catch (error) {
-      // Surface the specific API error to the user and stop processing
-      console.error("OpenAI error", error);
-      setApiError(error);
-      // Show a clear alert including type/code when available
-      const errMsg = error?.message || String(error);
-      const errCode = error?.code || error?.type || null;
-      alert(`OpenAI Error${errCode ? ` (${errCode})` : ""}: ${errMsg}`);
-      // Do not automatically fall back to local categorization for fatal errors
-      if (!error?.isFatal) {
-        // For transient errors, fall back to local categorization
-        await handleLocalCategorization();
-      }
-    } finally {
-      setIsPreparingAI(false);
-      setIsProcessing(false);
-      setProcessingProgress({
-        current: 0,
-        total: 0,
-        currentBatch: 0,
-        totalBatches: 0,
-      });
-    }
-  };
-
-  const handleLocalCategorization = async () => {
-    setIsProcessing(true);
-    setProcessingProgress({
-      current: 0,
-      total: products.length,
-      currentBatch: 0,
-      totalBatches: 0,
-    });
-
-    try {
-      const categorizedProducts = await batchCategorize(
-        products,
-        (current, total) => {
-          setProcessingProgress({
-            current,
-            total,
-            currentBatch: 0,
-            totalBatches: 0,
-          });
-        },
-        categories
-      );
-
-      // Log products that are not categorized or have low confidence
-      categorizedProducts.forEach((product, idx) => {
-        if (!product.suggestedCategory) {
-          console.warn(`Product #${idx + 1} not categorized:`, product);
-        } else if (product.confidence <= 40) {
-          console.info(
-            `Product #${idx + 1} low confidence (${product.confidence}):`,
-            product
-          );
-        }
-      });
-
-      dispatch(
-        setReduxProducts(
-          categorizedProducts.map((product) => ({
-            ...product,
-            // Preserve original categories from import
-            originalCategory:
-              product.originalCategory || product.suggestedCategory,
-            originalSubcategory:
-              product.originalSubcategory || product.suggestedSubcategory,
-            originalPartType:
-              product.originalPartType || product.suggestedPartType,
-          }))
-        )
-      );
-    } catch (error) {
-      alert("Categorization failed. Please check your data and try again.");
-    } finally {
-      setIsProcessing(false);
-      setProcessingProgress({
-        current: 0,
-        total: 0,
-        currentBatch: 0,
-        totalBatches: 0,
-      });
-    }
-  };
+  // OLD METHODS REMOVED - Now using professional vector-based categorization via edge function
+  // This eliminates multiple API calls and uses efficient database vector similarity search
 
   const recategorizeWithNewThreshold = () => {
     const updatedProducts = products.map((product) => {
@@ -1237,7 +1351,7 @@ const AcesPiesCategorizationTool = () => {
                   ) : (
                     <>
                       <Upload className="w-5 h-5" />
-                      <span>Upload to Supabase</span>
+                      <span>Permanently Stored</span>
                     </>
                   )}
                 </button>
@@ -1296,119 +1410,51 @@ const AcesPiesCategorizationTool = () => {
             confidenceThreshold={confidenceThreshold}
           /> */}
 
-          {estimatedCost && useOpenAI && (
-            <div className="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <DollarSign className="h-5 w-5 text-purple-600" />
-                  <span className="font-medium text-purple-900">
-                    OpenAI Cost Estimate
-                  </span>
-                </div>
-                <div className="text-right">
-                  <div className="text-lg font-bold text-purple-900">
-                    ${estimatedCost.estimatedCost.toFixed(2)}
-                  </div>
-                  <div className="text-xs text-purple-700">
-                    for {products.length.toLocaleString()} products
-                  </div>
-                </div>
-              </div>
-              <div className="mt-2 text-xs text-purple-600">
-                Using GPT-4o-mini (~
-                {Math.round(estimatedCost.inputTokens / 1000)}k input +{" "}
-                {Math.round(estimatedCost.outputTokens / 1000)}k output tokens)
-              </div>
-            </div>
-          )}
-
-          {isProcessing && processingProgress.total > 0 && (
+          {isProcessing && (
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-medium text-blue-900">
-                  {useOpenAI ? "AI Batch Processing..." : "Processing..."}
+                  Vector Similarity Categorization in Progress...
                 </span>
-                <span className="text-blue-700">
-                  {processingProgress.currentBatch > 0
-                    ? `Batch ${processingProgress.currentBatch}/${processingProgress.totalBatches} (${processingProgress.current}/${processingProgress.total} products)`
-                    : `${processingProgress.current}/${processingProgress.total} products`}
+                <span className="text-blue-700 flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Processing {products.length} products
                 </span>
               </div>
               <div className="w-full bg-blue-200 rounded-full h-2">
                 <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300 animate-pulse"
                   style={{
-                    width: `${
-                      (processingProgress.current / processingProgress.total) *
-                      100
-                    }%`,
+                    width: "100%",
                   }}
                 />
               </div>
               <div className="mt-1 text-xs text-blue-600">
-                {useOpenAI
-                  ? "Using OpenAI for enhanced accuracy"
-                  : "Using local categorization algorithms"}
-              </div>
-            </div>
-          )}
-
-          {isPreparingAI && processingProgress.currentBatch === 0 && (
-            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium text-yellow-900">
-                  Preparing AI...
-                </span>
-                <span className="text-yellow-700">
-                  Initializing and preparing batches
-                </span>
-              </div>
-              <div className="text-xs text-yellow-600">
-                Please wait — this may take a few seconds while the system
-                prepares the request batches.
+                Using vector embeddings for semantic matching
               </div>
             </div>
           )}
 
           <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
             <div className="flex flex-wrap gap-4">
-              <div className="flex items-center space-x-3 px-4 py-2 bg-white rounded-lg border border-gray-200 shadow-sm">
-                <Zap className="h-4 w-4 text-purple-600" />
-                <label className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={useOpenAI}
-                    onChange={(e) => setUseOpenAI(e.target.checked)}
-                    className="rounded"
-                  />
-                  <span className="text-sm font-medium text-gray-900">
-                    AI Enhancement
-                  </span>
-                </label>
-              </div>
-
               <button
                 onClick={autoSuggestAll}
                 disabled={isProcessing}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
-                {useOpenAI ? (
-                  <Brain className="w-4 h-4" />
-                ) : (
-                  <CheckCircle className="w-4 h-4" />
-                )}
+                <Brain className="w-4 h-4" />
                 {isProcessing
-                  ? processingProgress.currentBatch > 0
-                    ? `Processing Batch ${processingProgress.currentBatch}/${processingProgress.totalBatches}...`
-                    : `Processing... ${processingProgress.current}/${processingProgress.total}`
-                  : useOpenAI
-                  ? `AI-Enhance (${
-                      activeCategories === "user" ? "User" : "ACES"
-                    })`
-                  : `Auto-Suggest (${
-                      activeCategories === "user" ? "User" : "ACES"
-                    })`}
+                  ? `Categorizing... (Vector Similarity)`
+                  : `Auto-Categorize with Vector Similarity`}
               </button>
+
+              <div className="flex items-center space-x-2 px-4 py-2 bg-white rounded-lg border border-gray-200 shadow-sm">
+                <Target className="h-4 w-4 text-blue-600" />
+                <span className="text-sm font-medium text-gray-700">
+                  Using: {activeCategories === "user" ? "Custom" : "ACES"}{" "}
+                  Categories
+                </span>
+              </div>
 
               <button
                 onClick={assignCategoriesViaEdgeFunction}
@@ -1429,7 +1475,7 @@ const AcesPiesCategorizationTool = () => {
 
               {productsReadyForUpload && products.length > 0 && (
                 <button
-                  onClick={uploadProductsToSupabase}
+                  onClick={() => setShowUploadModal(true)}
                   disabled={uploadingProducts}
                   className={`px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm ${
                     uploadingProducts
@@ -1445,7 +1491,7 @@ const AcesPiesCategorizationTool = () => {
                   ) : (
                     <>
                       <Upload className="w-4 h-4" />
-                      <span>Upload to Supabase</span>
+                      <span>Permanently Stored</span>
                     </>
                   )}
                 </button>
@@ -1529,16 +1575,7 @@ const AcesPiesCategorizationTool = () => {
             </div>
           </div>
 
-          {/* Advanced Settings Panel */}
-          {/* <AdvancedSettings
-            show={showAdvancedSettings}
-            confidenceThreshold={confidenceThreshold}
-            setConfidenceThreshold={setConfidenceThreshold}
-            onRecategorize={recategorizeWithNewThreshold}
-            products={products}
-            useOpenAI={useOpenAI}
-            setUseOpenAI={setUseOpenAI}
-          /> */}
+          {/* Advanced Settings Panel - Removed as we now use vector similarity exclusively */}
 
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
             <div className="overflow-x-auto max-w-full">
@@ -1827,6 +1864,13 @@ const AcesPiesCategorizationTool = () => {
         categories={categories}
         onUpdateProducts={handleBulkUpdateProducts}
         confidenceThreshold={confidenceThreshold}
+      />
+
+      <UploadToSupabaseModal
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onUpload={uploadProductsToSupabase}
+        productsCount={products.length}
       />
     </div>
   );
