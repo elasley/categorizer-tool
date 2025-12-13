@@ -19,6 +19,8 @@ import Categories from "./pages/dashboard/Categories";
 import CategoriesPage from "./pages/dashboard/CategoriesPage";
 import SubcategoriesPage from "./pages/dashboard/SubcategoriesPage";
 import ParttypesPage from "./pages/dashboard/ParttypesPage";
+import ReportsPage from "./pages/dashboard/ReportsPage";
+import ProductsViewPage from "./pages/dashboard/ProductsViewPage";
 import PrivateRoute from "./components/PrivateRoute";
 import LoadingSpinner from "./components/LoadingSpinner";
 
@@ -94,18 +96,10 @@ function App() {
                   </div>
                 }
               />
+              <Route path="reports" element={<ReportsPage />} />
               <Route
-                path="reports"
-                element={
-                  <div className="bg-white rounded-xl shadow-md border border-gray-200 p-8">
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      Reports
-                    </h2>
-                    <p className="text-gray-600 mt-2">
-                      View categorization reports
-                    </p>
-                  </div>
-                }
+                path="products-view/:fileUrl"
+                element={<ProductsViewPage />}
               />
               <Route
                 path="insights"

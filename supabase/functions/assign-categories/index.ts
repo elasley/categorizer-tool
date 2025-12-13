@@ -1,5 +1,5 @@
 // Supabase Edge Function: assign-categories
-// This function assigns categories to products based on embeddings similarity
+// Optimized for large-scale product categorization with caching
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
@@ -10,14 +10,14 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+const MAX_PRODUCTS_PER_REQUEST = 500; // Process in batches to avoid timeouts
+
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // Create Supabase client
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
@@ -28,53 +28,59 @@ serve(async (req) => {
       }
     );
 
-    // Get request body
     const body = await req.json();
-    console.log(
-      "Received request body:",
-      JSON.stringify(body).substring(0, 200)
-    );
-
     const { products } = body;
 
     if (!products || !Array.isArray(products)) {
-      console.error("Invalid products array:", products);
       throw new Error("Products array is required");
     }
 
-    console.log(`Received ${products.length} products to categorize`);
-    if (products.length > 0) {
-      console.log("First product sample:", JSON.stringify(products[0]));
+    const totalProducts = products.length;
+    console.log(`\n🚀 Received ${totalProducts} products for categorization`);
+
+    // Limit products per request
+    if (totalProducts > MAX_PRODUCTS_PER_REQUEST) {
+      console.log(
+        `⚠️  Request exceeds limit of ${MAX_PRODUCTS_PER_REQUEST} products`
+      );
+      return new Response(
+        JSON.stringify({
+          error: `Too many products. Please process in batches of ${MAX_PRODUCTS_PER_REQUEST} or fewer.`,
+          maxAllowed: MAX_PRODUCTS_PER_REQUEST,
+          received: totalProducts,
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400,
+        }
+      );
     }
 
-    const categorizedProducts = [];
-
-    // Hash-based TF-IDF embedding generation (MUST match frontend exactly)
+    // Embedding generation functions
     const hashString = (str: string, seed = 0): number => {
       let hash = seed;
       for (let i = 0; i < str.length; i++) {
         const char = str.charCodeAt(i);
         hash = (hash << 5) - hash + char;
-        hash = hash & hash; // Convert to 32-bit integer
+        hash = hash & hash;
       }
       return Math.abs(hash);
     };
 
     const tokenize = (text: string): string[] => {
       if (!text) return [];
-
-      // Convert to lowercase and remove special characters
       const cleaned = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
-
-      // Split into words
-      const words = cleaned.split(/\s+/).filter((w) => w.length > 0);
-
-      // Generate unigrams and bigrams
+      const words = cleaned.split(/\s+/).filter((w) => w.length > 2); // Skip very short words
       const tokens = [...words];
 
       // Add bigrams
       for (let i = 0; i < words.length - 1; i++) {
         tokens.push(`${words[i]}_${words[i + 1]}`);
+      }
+
+      // Add trigrams for better matching
+      for (let i = 0; i < words.length - 2; i++) {
+        tokens.push(`${words[i]}_${words[i + 1]}_${words[i + 2]}`);
       }
 
       return tokens;
@@ -88,30 +94,22 @@ serve(async (req) => {
       const tokens = tokenize(text);
       const embedding = new Array(dimension).fill(0);
 
-      if (tokens.length === 0) {
-        return embedding;
-      }
+      if (tokens.length === 0) return embedding;
 
-      // Count token frequencies
       const tokenCounts: { [key: string]: number } = {};
       tokens.forEach((token) => {
         tokenCounts[token] = (tokenCounts[token] || 0) + 1;
       });
 
-      // Calculate TF-IDF-like scores and map to vector positions
       Object.entries(tokenCounts).forEach(([token, count]) => {
-        // TF (term frequency): normalized by total tokens
         const tf = count / tokens.length;
-
-        // Use hash to determine multiple positions in the vector
-        for (let i = 0; i < 3; i++) {
+        // Use more hash positions for better distribution
+        for (let i = 0; i < 5; i++) {
           const position = hashString(token, i) % dimension;
-          // Add weighted contribution
-          embedding[position] += tf * (1 - i * 0.2); // Decay for additional positions
+          embedding[position] += tf * (1 - i * 0.15); // Gentler decay
         }
       });
 
-      // Normalize the vector (L2 normalization)
       const magnitude = Math.sqrt(
         embedding.reduce((sum, val) => sum + val * val, 0)
       );
@@ -125,388 +123,376 @@ serve(async (req) => {
       return embedding;
     };
 
-    // Fetch all categories, subcategories, and parttypes ONCE
-    console.log("Fetching all categories...");
-    const { data: allCategories, error: catError } = await supabaseClient
-      .from("categories")
-      .select("id, name, embedding");
+    const cosineSimilarity = (vecA: number[], vecB: number[]): number => {
+      if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+      let dot = 0;
+      for (let i = 0; i < vecA.length; i++) {
+        dot += vecA[i] * (vecB[i] || 0);
+      }
+      return dot;
+    };
 
-    if (catError) throw catError;
+    // OPTIMIZATION: Load ALL data ONCE and cache it
+    console.log("📥 Loading category database...");
 
-    console.log("Fetching all subcategories...");
-    const { data: allSubcategories, error: subError } = await supabaseClient
-      .from("subcategories")
-      .select("id, name, category_id, embedding");
+    const [categoriesResult, subcategoriesResult, parttypesResult] =
+      await Promise.all([
+        supabaseClient.from("categories").select("id, name, embedding"),
+        supabaseClient
+          .from("subcategories")
+          .select("id, name, category_id, embedding"),
+        supabaseClient
+          .from("parttypes")
+          .select("id, name, subcategory_id, embedding"),
+      ]);
 
-    if (subError) throw subError;
+    if (categoriesResult.error) throw categoriesResult.error;
+    if (subcategoriesResult.error) throw subcategoriesResult.error;
+    if (parttypesResult.error) throw parttypesResult.error;
 
-    console.log("Fetching all parttypes...");
-    const { data: allParttypes, error: ptError } = await supabaseClient
-      .from("parttypes")
-      .select("id, name, subcategory_id, embedding");
+    // Parse embeddings if they come as strings (pgvector format)
+    const parseEmbedding = (item: any) => {
+      if (item.embedding && typeof item.embedding === "string") {
+        try {
+          item.embedding = JSON.parse(item.embedding);
+        } catch (e) {
+          console.error(`Failed to parse embedding for ${item.name}:`, e);
+          item.embedding = null;
+        }
+      }
+      return item;
+    };
 
-    if (ptError) throw ptError;
+    const allCategories = (categoriesResult.data || []).map(parseEmbedding);
+    const allSubcategories = (subcategoriesResult.data || []).map(
+      parseEmbedding
+    );
+    const allParttypes = (parttypesResult.data || []).map(parseEmbedding);
 
     console.log(
-      `Loaded ${allCategories?.length || 0} categories, ${
-        allSubcategories?.length || 0
-      } subcategories, ${allParttypes?.length || 0} parttypes`
+      `✅ Loaded ${allCategories.length} categories, ${allSubcategories.length} subcategories, ${allParttypes.length} parttypes`
     );
 
-    // Check if database is empty
-    if (!allCategories || allCategories.length === 0) {
-      throw new Error(
-        "No categories found in database. Please upload categories first."
-      );
-    }
-    if (!allSubcategories || allSubcategories.length === 0) {
-      throw new Error(
-        "No subcategories found in database. Please upload categories first."
-      );
-    }
-    if (!allParttypes || allParttypes.length === 0) {
-      throw new Error(
-        "No parttypes found in database. Please upload categories first."
-      );
-    }
-
-    // Log embedding status
-    const catsWithEmbedding = allCategories.filter(
+    // DEBUG: Check if embeddings exist
+    const categoriesWithEmbeddings = allCategories.filter(
       (c) => c.embedding && Array.isArray(c.embedding) && c.embedding.length > 0
     );
-    const subsWithEmbedding = allSubcategories.filter(
+    const subcategoriesWithEmbeddings = allSubcategories.filter(
       (s) => s.embedding && Array.isArray(s.embedding) && s.embedding.length > 0
     );
-    const ptsWithEmbedding = allParttypes.filter(
+    const parttypesWithEmbeddings = allParttypes.filter(
       (p) => p.embedding && Array.isArray(p.embedding) && p.embedding.length > 0
     );
 
     console.log(
-      `Embeddings: ${catsWithEmbedding.length}/${allCategories.length} cats, ${subsWithEmbedding.length}/${allSubcategories.length} subs, ${ptsWithEmbedding.length}/${allParttypes.length} pts`
+      `🔍 Embeddings check: ${categoriesWithEmbeddings.length}/${allCategories.length} categories, ${subcategoriesWithEmbeddings.length}/${allSubcategories.length} subcategories, ${parttypesWithEmbeddings.length}/${allParttypes.length} parttypes have valid embeddings`
     );
 
-    if (catsWithEmbedding.length === 0) {
-      console.warn("WARNING: No categories have embeddings!");
+    if (categoriesWithEmbeddings.length === 0) {
+      throw new Error(
+        "❌ No category embeddings found! Please re-upload categories to generate embeddings."
+      );
     }
 
-    console.log(`Processing ${products.length} products...`);
+    if (allCategories.length === 0) {
+      throw new Error("No categories found. Please upload categories first.");
+    }
 
-    // Process each product
-    for (const product of products) {
+    // Create lookup maps for faster access
+    const categoryMap = new Map(allCategories.map((c) => [c.id, c]));
+    const subcategoryMap = new Map(allSubcategories.map((s) => [s.id, s]));
+    const subcategoriesByCategory = new Map<string, typeof allSubcategories>();
+    const parttypesBySubcategory = new Map<string, typeof allParttypes>();
+
+    allSubcategories.forEach((sub) => {
+      if (!subcategoriesByCategory.has(sub.category_id)) {
+        subcategoriesByCategory.set(sub.category_id, []);
+      }
+      subcategoriesByCategory.get(sub.category_id)!.push(sub);
+    });
+
+    allParttypes.forEach((pt) => {
+      if (!parttypesBySubcategory.has(pt.subcategory_id)) {
+        parttypesBySubcategory.set(pt.subcategory_id, []);
+      }
+      parttypesBySubcategory.get(pt.subcategory_id)!.push(pt);
+    });
+
+    console.log("🚀 Starting batch categorization...");
+
+    const categorizedProducts = [];
+    let successCount = 0;
+
+    // Process products
+    for (let i = 0; i < products.length; i++) {
+      const product = products[i];
+
       try {
-        console.log(`\n=== Processing product: ${product.name} ===`);
+        if (i % 50 === 0) {
+          console.log(`📦 Progress: ${i + 1}/${products.length}`);
+        }
 
-        const combinedText = `${product.name} ${product.description || ""}`;
-        console.log(`Combined text: "${combinedText.substring(0, 100)}..."`);
-
+        const combinedText = `${product.name || ""} ${
+          product.description || ""
+        }`.trim();
         const productEmbedding = generateEmbedding(combinedText, 768);
-        console.log(
-          `Generated embedding with ${
-            productEmbedding.length
-          } dimensions, magnitude: ${Math.sqrt(
-            productEmbedding.reduce((s, v) => s + v * v, 0)
-          ).toFixed(4)}`
-        );
+        const productTextLower = combinedText.toLowerCase();
 
-        // Find best matching category using cosine similarity
+        // Helper function: Check if product text contains keywords from category name
+        const getKeywordBoost = (
+          productText: string,
+          categoryName: string
+        ): number => {
+          const categoryWords = categoryName
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, " ")
+            .split(/\s+/)
+            .filter((w) => w.length > 2); // Skip short words like "and", "or"
+
+          let matchedWords = 0;
+          for (const word of categoryWords) {
+            if (productText.includes(word)) {
+              matchedWords++;
+            }
+          }
+
+          // Return boost: 0 to 0.4 based on keyword matches
+          return matchedWords > 0 ? Math.min(matchedWords * 0.15, 0.4) : 0;
+        };
+
+        // HIERARCHICAL MATCHING WITH KEYWORD BOOSTING
+
+        // Step 1: Find best matching CATEGORY
         let bestCategory = null;
-        let bestCatSimilarity = -1;
-        let categoriesChecked = 0;
+        let bestCatSim = -1;
+        const TOP_CATEGORIES_TO_LOG = 3;
+        const topCategories: Array<{
+          name: string;
+          score: number;
+          boost: number;
+        }> = [];
 
-        for (const cat of allCategories || []) {
-          if (
-            cat.embedding &&
-            Array.isArray(cat.embedding) &&
-            cat.embedding.length > 0
-          ) {
-            categoriesChecked++;
-            const similarity = productEmbedding.reduce(
-              (sum, val, idx) => sum + val * (cat.embedding[idx] || 0),
-              0
-            );
-            if (similarity > bestCatSimilarity) {
-              bestCatSimilarity = similarity;
+        for (const cat of allCategories) {
+          if (cat.embedding && Array.isArray(cat.embedding)) {
+            const vectorSim = cosineSimilarity(productEmbedding, cat.embedding);
+            const keywordBoost = getKeywordBoost(productTextLower, cat.name);
+            const boostedSim = Math.min(vectorSim + keywordBoost, 1.0); // Cap at 100%
+
+            topCategories.push({
+              name: cat.name,
+              score: boostedSim,
+              boost: keywordBoost,
+            });
+            if (boostedSim > bestCatSim) {
+              bestCatSim = boostedSim;
               bestCategory = cat;
             }
           }
         }
 
-        console.log(
-          `Checked ${categoriesChecked} categories, best match: ${
-            bestCategory?.name || "none"
-          } (${bestCatSimilarity.toFixed(4)})`
-        );
-
-        if (!bestCategory) {
-          console.log(
-            `No category found for product: ${product.name} - using first available`
-          );
-          // ALWAYS use a default category
-          if (allCategories && allCategories.length > 0) {
-            bestCategory = allCategories[0];
-            bestCatSimilarity = 0.3;
-            console.log(`Using fallback category: ${bestCategory.name}`);
-          } else {
-            console.error("No categories in database!");
-            continue;
-          }
+        topCategories.sort((a, b) => b.score - a.score);
+        if (i < 3) {
+          // Log first 3 products in detail
+          console.log(`\n🔍 Product: "${product.name}"`);
+          console.log(`   Top ${TOP_CATEGORIES_TO_LOG} category matches:`);
+          topCategories.slice(0, TOP_CATEGORIES_TO_LOG).forEach((cat, idx) => {
+            const boostStr =
+              cat.boost > 0 ? ` (+${(cat.boost * 100).toFixed(0)}% boost)` : "";
+            console.log(
+              `   ${idx + 1}. ${cat.name}: ${(cat.score * 100).toFixed(
+                1
+              )}%${boostStr}`
+            );
+          });
         }
 
-        // Find best matching subcategory - check within category first
+        if (!bestCategory) {
+          bestCategory = allCategories[0];
+          bestCatSim = 0.05;
+        }
+
+        // Step 2: Find best matching SUBCATEGORY within the chosen category (with keyword boosting)
         const categorySubcategories =
-          allSubcategories?.filter(
-            (sub) => sub.category_id === bestCategory.id
-          ) || [];
-
-        console.log(
-          `Found ${categorySubcategories.length} subcategories in category "${bestCategory.name}"`
-        );
-
+          subcategoriesByCategory.get(bestCategory.id) || allSubcategories;
         let bestSubcategory = null;
-        let bestSubSimilarity = -1;
+        let bestSubSim = -1;
+        const topSubcategories: Array<{
+          name: string;
+          score: number;
+          boost: number;
+        }> = [];
 
-        // Try to find best match within the category
         for (const sub of categorySubcategories) {
-          if (
-            sub.embedding &&
-            Array.isArray(sub.embedding) &&
-            sub.embedding.length > 0
-          ) {
-            const similarity = productEmbedding.reduce(
-              (sum, val, idx) => sum + val * (sub.embedding[idx] || 0),
-              0
-            );
-            if (similarity > bestSubSimilarity) {
-              bestSubSimilarity = similarity;
+          if (sub.embedding && Array.isArray(sub.embedding)) {
+            const vectorSim = cosineSimilarity(productEmbedding, sub.embedding);
+            const keywordBoost = getKeywordBoost(productTextLower, sub.name);
+            const boostedSim = Math.min(vectorSim + keywordBoost, 1.0);
+
+            topSubcategories.push({
+              name: sub.name,
+              score: boostedSim,
+              boost: keywordBoost,
+            });
+            if (boostedSim > bestSubSim) {
+              bestSubSim = boostedSim;
               bestSubcategory = sub;
             }
           }
         }
 
-        console.log(
-          `Best subcategory in category: ${bestSubcategory?.name || "none"} (${
-            bestSubSimilarity >= 0 ? bestSubSimilarity.toFixed(4) : "none"
-          })`
-        );
-
-        // If no good match in category, search ALL subcategories
-        if (!bestSubcategory || bestSubSimilarity < 0.2) {
+        topSubcategories.sort((a, b) => b.score - a.score);
+        if (i < 3) {
           console.log(
-            `Searching all ${allSubcategories.length} subcategories globally...`
+            `   Selected category: "${bestCategory.name}" (${(
+              bestCatSim * 100
+            ).toFixed(1)}%)`
           );
-          let globalBestSub = null;
-          let globalBestSim = -1;
-
-          for (const sub of allSubcategories || []) {
-            if (
-              sub.embedding &&
-              Array.isArray(sub.embedding) &&
-              sub.embedding.length > 0
-            ) {
-              const similarity = productEmbedding.reduce(
-                (sum, val, idx) => sum + val * (sub.embedding[idx] || 0),
-                0
-              );
-              if (similarity > globalBestSim) {
-                globalBestSim = similarity;
-                globalBestSub = sub;
-              }
-            }
-          }
-
-          if (globalBestSub && globalBestSim > bestSubSimilarity) {
-            bestSubcategory = globalBestSub;
-            bestSubSimilarity = globalBestSim;
-            // Update category to match the subcategory
-            const newCategory = allCategories?.find(
-              (c) => c.id === globalBestSub.category_id
-            );
-            if (newCategory) {
-              bestCategory = newCategory;
+          console.log(
+            `   Top ${TOP_CATEGORIES_TO_LOG} subcategory matches in "${bestCategory.name}":`
+          );
+          topSubcategories
+            .slice(0, TOP_CATEGORIES_TO_LOG)
+            .forEach((sub, idx) => {
+              const boostStr =
+                sub.boost > 0
+                  ? ` (+${(sub.boost * 100).toFixed(0)}% boost)`
+                  : "";
               console.log(
-                `Updated to better match: "${bestSubcategory.name}" in "${
-                  bestCategory.name
-                }" (${globalBestSim.toFixed(4)})`
+                `   ${idx + 1}. ${sub.name}: ${(sub.score * 100).toFixed(
+                  1
+                )}%${boostStr}`
               );
-            }
-          }
+            });
         }
 
-        // If still no subcategory, use first available
         if (!bestSubcategory) {
-          if (categorySubcategories.length > 0) {
-            bestSubcategory = categorySubcategories[0];
-            bestSubSimilarity = 0.1;
-            console.log(
-              `Using first subcategory in category: ${bestSubcategory.name}`
-            );
-          } else if (allSubcategories.length > 0) {
-            bestSubcategory = allSubcategories[0];
-            bestSubSimilarity = 0.1;
-            const newCategory = allCategories?.find(
-              (c) => c.id === bestSubcategory.category_id
-            );
-            if (newCategory) bestCategory = newCategory;
-            console.log(
-              `Using first global subcategory: ${bestSubcategory.name}`
-            );
-          } else {
-            console.error(
-              `Cannot categorize ${product.name} - no subcategories exist`
-            );
-            continue;
-          }
+          bestSubcategory = categorySubcategories[0] || allSubcategories[0];
+          bestSubSim = 0.05;
         }
 
-        // Find best matching part type - check within subcategory first
+        // Step 3: Find best matching PARTTYPE within the chosen subcategory (with keyword boosting)
         const subcategoryParttypes =
-          allParttypes?.filter(
-            (pt) => pt.subcategory_id === bestSubcategory.id
-          ) || [];
-
-        console.log(
-          `Found ${subcategoryParttypes.length} parttypes in subcategory "${bestSubcategory.name}"`
-        );
-
+          parttypesBySubcategory.get(bestSubcategory.id) || allParttypes;
         let bestParttype = null;
-        let bestPtSimilarity = -1;
+        let bestPtSim = -1;
+        const topParttypes: Array<{
+          name: string;
+          score: number;
+          boost: number;
+        }> = [];
 
-        // Try to find best match within the subcategory
         for (const pt of subcategoryParttypes) {
-          if (
-            pt.embedding &&
-            Array.isArray(pt.embedding) &&
-            pt.embedding.length > 0
-          ) {
-            const similarity = productEmbedding.reduce(
-              (sum, val, idx) => sum + val * (pt.embedding[idx] || 0),
-              0
-            );
-            if (similarity > bestPtSimilarity) {
-              bestPtSimilarity = similarity;
+          if (pt.embedding && Array.isArray(pt.embedding)) {
+            const vectorSim = cosineSimilarity(productEmbedding, pt.embedding);
+            const keywordBoost = getKeywordBoost(productTextLower, pt.name);
+            const boostedSim = Math.min(vectorSim + keywordBoost, 1.0);
+
+            topParttypes.push({
+              name: pt.name,
+              score: boostedSim,
+              boost: keywordBoost,
+            });
+            if (boostedSim > bestPtSim) {
+              bestPtSim = boostedSim;
               bestParttype = pt;
             }
           }
         }
 
-        console.log(
-          `Best parttype in subcategory: ${bestParttype?.name || "none"} (${
-            bestPtSimilarity >= 0 ? bestPtSimilarity.toFixed(4) : "none"
-          })`
-        );
-
-        // If no good match in subcategory, search ALL parttypes
-        if (!bestParttype || bestPtSimilarity < 0.2) {
+        topParttypes.sort((a, b) => b.score - a.score);
+        if (i < 3) {
           console.log(
-            `Searching all ${allParttypes.length} parttypes globally...`
+            `   Selected subcategory: "${bestSubcategory.name}" (${(
+              bestSubSim * 100
+            ).toFixed(1)}%)`
           );
-          let globalBestPt = null;
-          let globalBestSim = -1;
-
-          for (const pt of allParttypes || []) {
-            if (
-              pt.embedding &&
-              Array.isArray(pt.embedding) &&
-              pt.embedding.length > 0
-            ) {
-              const similarity = productEmbedding.reduce(
-                (sum, val, idx) => sum + val * (pt.embedding[idx] || 0),
-                0
-              );
-              if (similarity > globalBestSim) {
-                globalBestSim = similarity;
-                globalBestPt = pt;
-              }
-            }
-          }
-
-          if (globalBestPt && globalBestSim > bestPtSimilarity) {
-            bestParttype = globalBestPt;
-            bestPtSimilarity = globalBestSim;
-            // Update subcategory and category to match the parttype
-            const newSubcategory = allSubcategories?.find(
-              (s) => s.id === globalBestPt.subcategory_id
-            );
-            if (newSubcategory) {
-              bestSubcategory = newSubcategory;
-              const newCategory = allCategories?.find(
-                (c) => c.id === newSubcategory.category_id
-              );
-              if (newCategory) bestCategory = newCategory;
-              console.log(
-                `Updated to better match: "${bestParttype.name}" in "${
-                  bestSubcategory.name
-                }" > "${bestCategory.name}" (${globalBestSim.toFixed(4)})`
-              );
-            }
-          }
-        }
-
-        // If still no parttype, use first available
-        if (!bestParttype) {
-          if (subcategoryParttypes.length > 0) {
-            bestParttype = subcategoryParttypes[0];
-            bestPtSimilarity = 0.1;
+          console.log(
+            `   Top ${TOP_CATEGORIES_TO_LOG} parttype matches in "${bestSubcategory.name}":`
+          );
+          topParttypes.slice(0, TOP_CATEGORIES_TO_LOG).forEach((pt, idx) => {
+            const boostStr =
+              pt.boost > 0 ? ` (+${(pt.boost * 100).toFixed(0)}% boost)` : "";
             console.log(
-              `Using first parttype in subcategory: ${bestParttype.name}`
+              `   ${idx + 1}. ${pt.name}: ${(pt.score * 100).toFixed(
+                1
+              )}%${boostStr}`
             );
-          } else if (allParttypes.length > 0) {
-            bestParttype = allParttypes[0];
-            bestPtSimilarity = 0.1;
-            const newSubcategory = allSubcategories?.find(
-              (s) => s.id === bestParttype.subcategory_id
-            );
-            if (newSubcategory) {
-              bestSubcategory = newSubcategory;
-              const newCategory = allCategories?.find(
-                (c) => c.id === newSubcategory.category_id
-              );
-              if (newCategory) bestCategory = newCategory;
-            }
-            console.log(`Using first global parttype: ${bestParttype.name}`);
-          } else {
-            console.error(
-              `Cannot categorize ${product.name} - no parttypes exist`
-            );
-            continue;
-          }
+          });
         }
 
-        // Calculate average confidence score
-        const avgSimilarity =
-          (bestCatSimilarity + bestSubSimilarity + bestPtSimilarity) / 3;
-        const confidence = Math.round(avgSimilarity * 100);
+        if (!bestParttype) {
+          bestParttype = subcategoryParttypes[0] || allParttypes[0];
+          bestPtSim = 0.05;
+        }
 
-        const result = {
+        const category = bestCategory;
+        const subcategory = bestSubcategory;
+        const catSim = bestCatSim;
+        const subSim = bestSubSim;
+
+        // Calculate confidence with weighted hierarchy (parttype is most specific, so weight it more)
+        // Weight: Category 25%, Subcategory 30%, Parttype 45%
+        const weightedSimilarity =
+          catSim * 0.25 + subSim * 0.3 + bestPtSim * 0.45;
+        const confidence = Math.round(weightedSimilarity * 100);
+
+        categorizedProducts.push({
           id: product.id,
-          category: bestCategory.name,
-          subcategory: bestSubcategory.name,
+          category: category.name,
+          subcategory: subcategory.name,
           partType: bestParttype.name,
           confidence: confidence,
-        };
+        });
 
-        console.log(
-          `Categorized: ${product.name} -> ${bestCategory.name} > ${bestSubcategory.name} > ${bestParttype.name} (${confidence}%)`
-        );
-        categorizedProducts.push(result);
+        successCount++;
       } catch (productError) {
         console.error(
-          `Error processing product ${product.name}:`,
-          productError
+          `❌ Error processing product ${product.name}:`,
+          productError.message
         );
-        console.error("Stack trace:", productError.stack);
-        // Continue with next product
       }
     }
 
     console.log(
-      `Successfully categorized ${categorizedProducts.length} out of ${products.length} products`
+      `\n✅ Categorization complete: ${successCount}/${products.length} products`
     );
+
+    // Calculate quality distribution (updated thresholds for keyword-boosted scoring)
+    const excellentMatches = categorizedProducts.filter(
+      (p) => p.confidence >= 70
+    ).length;
+    const goodMatches = categorizedProducts.filter(
+      (p) => p.confidence >= 50 && p.confidence < 70
+    ).length;
+    const weakMatches = categorizedProducts.filter(
+      (p) => p.confidence >= 30 && p.confidence < 50
+    ).length;
+    const poorMatches = categorizedProducts.filter(
+      (p) => p.confidence < 30
+    ).length;
+
+    console.log(
+      `📊 Quality: ${excellentMatches} excellent (≥70%), ${goodMatches} good (50-69%), ${weakMatches} weak (30-49%), ${poorMatches} poor (<30%)`
+    );
+
+    if (excellentMatches + goodMatches > successCount / 2) {
+      console.log("✅ High quality matches achieved!");
+    } else if (poorMatches > successCount / 2) {
+      console.log(
+        "⚠️ Many poor matches - categories may not align with product domain"
+      );
+    }
 
     return new Response(
       JSON.stringify({
         categorizedProducts,
-        totalProcessed: categorizedProducts.length,
+        totalProcessed: successCount,
+        totalRequested: products.length,
+        qualityStats: {
+          good: goodMatches,
+          weak: weakMatches,
+          poor: poorMatches,
+        },
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -514,6 +500,7 @@ serve(async (req) => {
       }
     );
   } catch (error) {
+    console.error("❌ Error:", error.message);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 400,
