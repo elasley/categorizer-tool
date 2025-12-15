@@ -206,17 +206,37 @@ const SubcategoriesPage = () => {
     return categories.find((c) => c.id === categoryId)?.name || "Unknown";
   };
 
-  // Filtering is now done on the loaded subcategories only
-  const filteredSubcategories = subcategories.filter(
-    (sub) =>
-      sub.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      getCategoryName(sub.category_id)
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase())
-  );
+  // Remove local filtering and fetch from supabase on search
+  useEffect(() => {
+    if (searchTerm.trim() === "") {
+      loadInitialData();
+      return;
+    }
+    // Debounce search
+    const timeout = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("subcategories")
+          .select("*")
+          .ilike("name", `%${searchTerm}%`)
+          .order("name");
+        if (error) throw error;
+        setSubcategories(data || []);
+        setHasMore(false);
+        setDisplayCount(data?.length || 0);
+      } catch (error) {
+        toast.error("Failed to search subcategories");
+      } finally {
+        setLoading(false);
+      }
+    }, 500);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line
+  }, [searchTerm]);
 
-  // No slicing, since we fetch in batches
-  const displayedSubcategories = filteredSubcategories;
+  // Remove local filtering
+  const displayedSubcategories = subcategories;
 
   useEffect(() => {
     if (!hasMore || loadingMore || loading) return;
@@ -329,7 +349,7 @@ const SubcategoriesPage = () => {
             All Subcategories
           </h2>
           <span className="text-sm text-gray-500">
-            {filteredSubcategories.length} subcategories
+            {displayedSubcategories.length} subcategories
           </span>
         </div>
 
@@ -338,7 +358,7 @@ const SubcategoriesPage = () => {
             Array.from({ length: 8 }).map((_, idx) => (
               <SkeletonCard key={idx} />
             ))
-          ) : filteredSubcategories.length === 0 ? (
+          ) : displayedSubcategories.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
               <p>No subcategories found</p>
@@ -405,9 +425,9 @@ const SubcategoriesPage = () => {
         </div>
 
         {/* Pagination Footer */}
-        {!loading && filteredSubcategories.length > 0 && (
+        {!loading && displayedSubcategories.length > 0 && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            Showing {filteredSubcategories.length} of {subcategories.length} loaded
+            Showing {displayedSubcategories.length} of {subcategories.length} loaded
             {totalCount > 0 && (
               <> (out of {totalCount} total subcategor{totalCount === 1 ? "y" : "ies"})</>
             )}

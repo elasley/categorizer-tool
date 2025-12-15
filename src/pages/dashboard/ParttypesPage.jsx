@@ -229,18 +229,36 @@ const ParttypesPage = () => {
     );
   };
 
-  const filteredParttypes = parttypes.filter(
-    (pt) =>
-      pt.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      getSubcategoryName(pt.subcategory_id)
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      getCategoryName(pt.subcategory_id)
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase())
-  );
+  // Remove local filtering and fetch from supabase on search
+  useEffect(() => {
+    if (searchTerm.trim() === "") {
+      loadInitialData();
+      return;
+    }
+    // Debounce search
+    const timeout = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("parttypes")
+          .select("*")
+          .ilike("name", `%${searchTerm}%`)
+          .order("name");
+        if (error) throw error;
+        setParttypes(data || []);
+        setHasMore(false);
+        setDisplayCount(data?.length || 0);
+      } catch (error) {
+        toast.error("Failed to search part types");
+      } finally {
+        setLoading(false);
+      }
+    }, 500);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line
+  }, [searchTerm]);
 
-  const displayedParttypes = filteredParttypes;
+  const displayedParttypes = parttypes;
 
   useEffect(() => {
     if (!hasMore || loadingMore || loading) return;
@@ -351,7 +369,7 @@ const ParttypesPage = () => {
             All Part Types
           </h2>
           <span className="text-sm text-gray-500">
-            {filteredParttypes.length} part types
+            {displayedParttypes.length} part types
           </span>
         </div>
 
@@ -360,7 +378,7 @@ const ParttypesPage = () => {
             Array.from({ length: 8 }).map((_, idx) => (
               <SkeletonCard key={idx} />
             ))
-          ) : filteredParttypes.length === 0 ? (
+          ) : displayedParttypes.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
               <p>No part types found</p>
@@ -428,9 +446,9 @@ const ParttypesPage = () => {
         </div>
 
         {/* Pagination Footer */}
-        {!loading && filteredParttypes.length > 0 && (
+        {!loading && displayedParttypes.length > 0 && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            Showing {filteredParttypes.length} of {parttypes.length} loaded
+            Showing {displayedParttypes.length} of {parttypes.length} loaded
             {totalCount > 0 && (
               <> (out of {totalCount} total part type{totalCount > 1 ? "s" : ""})</>
             )}

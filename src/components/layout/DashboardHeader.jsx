@@ -44,13 +44,13 @@ const DashboardHeader = ({ onMenuClick, isSidebarOpen }) => {
               )}
             </button>
 
-            {/* Logo - Hidden on mobile when sidebar is open */}
-            <div className={`${isSidebarOpen ? "hidden lg:block" : "block"}`}>
+            {/* Logo - Hidden on screens < 1024px (lg) */}
+            <div className="hidden lg:block">
               <Logo />
             </div>
 
             {/* Search Bar - Hidden on mobile */}
-            <div className="hidden md:flex items-center ">
+            <div className="hidden lg:flex items-center ">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   TrendingUp,
   Package,
@@ -10,40 +10,68 @@ import {
   ArrowUp,
   ArrowDown,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "../../config/supabase";
 
 const DashboardHome = () => {
+  const navigate = useNavigate();
+
+  // Add state for counts
+  const [categorizedCount, setCategorizedCount] = useState(0);
+  const [uploadFilesCount, setUploadFilesCount] = useState(0);
+  const [recentUploads, setRecentUploads] = useState([]);
+
+  useEffect(() => {
+    // Fetch total categorized products
+    const fetchCounts = async () => {
+      const { count: categorized, error: catErr } = await supabase
+        .from("categories")
+        .select("*", { count: "exact", head: true });
+      if (!catErr) setCategorizedCount(categorized || 0);
+
+      // Fetch total upload files
+      const { count: uploads, error: upErr } = await supabase
+        .from("upload_history")
+        .select("*", { count: "exact", head: true });
+      if (!upErr) setUploadFilesCount(uploads || 0);
+    };
+    fetchCounts();
+  }, []);
+
+  useEffect(() => {
+    // Fetch latest 4 uploads for recent activity
+    const fetchRecentUploads = async () => {
+      const { data, error } = await supabase
+        .from("upload_history")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(4);
+      if (!error) setRecentUploads(data || []);
+    };
+    fetchRecentUploads();
+  }, []);
+
+  // Remove handleViewAllUploads async logic, just navigate
+  const handleViewAllUploads = () => {
+    navigate("/dashboard/reports");
+  };
+
   const stats = [
     {
-      title: "Total Products",
-      value: "2,543",
-      change: "+12.5%",
-      trend: "up",
-      icon: Package,
-      color: "blue",
-    },
-    {
-      title: "Categorized",
-      value: "2,187",
-      change: "+8.2%",
+      title: "Total Categorized",
+      value: categorizedCount.toLocaleString(),
+      change: "",
       trend: "up",
       icon: CheckCircle,
       color: "green",
     },
     {
-      title: "Pending Review",
-      value: "356",
-      change: "-5.1%",
-      trend: "down",
-      icon: AlertTriangle,
-      color: "yellow",
-    },
-    {
-      title: "AI Accuracy",
-      value: "94.3%",
-      change: "+2.1%",
+      title: "Total Upload Files",
+      value: uploadFilesCount.toLocaleString(),
+      change: "",
       trend: "up",
-      icon: Zap,
-      color: "purple",
+      icon: Package,
+      color: "blue",
     },
   ];
 
@@ -77,7 +105,7 @@ const DashboardHome = () => {
   return (
     <div className="space-y-6">
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 sm:gap-6">
         {stats.map((stat, idx) => (
           <div
             key={idx}
@@ -89,18 +117,7 @@ const DashboardHome = () => {
               >
                 <stat.icon className={`w-6 h-6 text-${stat.color}-600`} />
               </div>
-              <div
-                className={`flex items-center gap-1 text-sm font-semibold ${
-                  stat.trend === "up" ? "text-green-600" : "text-red-600"
-                }`}
-              >
-                {stat.trend === "up" ? (
-                  <ArrowUp className="w-4 h-4" />
-                ) : (
-                  <ArrowDown className="w-4 h-4" />
-                )}
-                {stat.change}
-              </div>
+              {/* Remove change/trend if not needed */}
             </div>
             <h3 className="text-2xl font-bold text-gray-900 mb-1">
               {stat.value}
@@ -116,27 +133,36 @@ const DashboardHome = () => {
         <div className="lg:col-span-2 bg-white rounded-xl shadow-md border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold text-gray-900">Recent Activity</h2>
-            <button className="text-sm text-blue-600 hover:text-blue-700 font-semibold">
+            <button
+              className="text-sm text-blue-600 hover:text-blue-700 font-semibold"
+              onClick={handleViewAllUploads}
+            >
               View All
             </button>
           </div>
           <div className="space-y-4">
-            {recentActivity.map((activity) => (
-              <div
-                key={activity.id}
-                className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-              >
-                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
+            {recentUploads.length === 0 ? (
+              <div className="text-gray-500 text-center">No uploads yet.</div>
+            ) : (
+              recentUploads.map((upload) => (
+                <div
+                  key={upload.id}
+                  className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <Package className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {upload.file_name || "Unnamed File"}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(upload.created_at).toLocaleString()}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">
-                    {activity.action}
-                  </p>
-                  <p className="text-xs text-gray-500">{activity.time}</p>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -145,30 +171,34 @@ const DashboardHome = () => {
           <h2 className="text-xl font-bold text-gray-900 mb-6">
             Quick Actions
           </h2>
-          <div className="space-y-3">
-            <button className="w-full p-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-lg hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 shadow-md hover:shadow-lg text-left">
-              <div className="flex items-center gap-3">
-                <Package className="w-5 h-5" />
-                <span className="font-semibold text-sm">Upload Products</span>
-              </div>
-            </button>
-            <button className="w-full p-4 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors text-left border border-gray-200">
-              <div className="flex items-center gap-3">
-                <TrendingUp className="w-5 h-5 text-gray-600" />
-                <span className="font-semibold text-sm text-gray-700">
-                  View Reports
-                </span>
-              </div>
-            </button>
-            <button className="w-full p-4 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors text-left border border-gray-200">
-              <div className="flex items-center gap-3">
-                <Zap className="w-5 h-5 text-gray-600" />
-                <span className="font-semibold text-sm text-gray-700">
-                  AI insights
-                </span>
-              </div>
-            </button>
-          </div>
+         <div className="space-y-3">
+  <button
+    className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
+               hover:bg-blue-600 group"
+    onClick={() => navigate("/dashboard/categorize")}
+  >
+    <div className="flex items-center gap-3">
+      <Package className="w-5 h-5 text-gray-600 group-hover:text-white" />
+      <span className="font-semibold text-sm text-gray-700 group-hover:text-white">
+        Upload Products
+      </span>
+    </div>
+  </button>
+
+  <button
+    className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
+               hover:bg-blue-600 group border border-gray-200"
+    onClick={() => navigate("/dashboard/reports")}
+  >
+    <div className="flex items-center gap-3">
+      <TrendingUp className="w-5 h-5 text-gray-600 group-hover:text-white" />
+      <span className="font-semibold text-sm text-gray-700 group-hover:text-white">
+        View Reports
+      </span>
+    </div>
+  </button>
+</div>
+
         </div>
       </div>
     </div>
