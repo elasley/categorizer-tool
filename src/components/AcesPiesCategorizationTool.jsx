@@ -38,6 +38,7 @@ import { parseCategoryCSV, validateCategoryCSV } from "../utils/csvParser";
 import { acesCategories } from "../data/acesCategories";
 import { supabase } from "../config/supabase";
 import { generateCategoryEmbedding } from "../utils/embeddingUtils";
+import { batchCategorizeWithOpenAI } from "../utils/openaiCategorizer";
 import toast from "react-hot-toast";
 import {
   setCategories as setReduxCategories,
@@ -161,6 +162,7 @@ const AcesPiesCategorizationTool = () => {
   const [selectedCategory, setSelectedCategory] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [categorizationMethod, setCategorizationMethod] = useState(null);
   const [apiError, setApiError] = useState(null);
   const [lastUploadedFileInfo, setLastUploadedFileInfo] = useState(null);
   const [lastUploadType, setLastUploadType] = useState(null);
@@ -189,63 +191,120 @@ const AcesPiesCategorizationTool = () => {
       const categoryMap = new Map(); // categoryName -> categoryId
       const subcategoryMap = new Map(); // `${categoryId}_${subcategoryName}` -> subcategoryId
 
-      // Step 1: BULK Insert Categories
+      // Step 1: Check existing categories and insert only new ones
       const uniqueCategories = [...new Set(Object.keys(categoriesData))];
 
       console.log(
-        `📁 Step 1: Bulk inserting ${uniqueCategories.length} categories...`
+        `📁 Step 1: Checking ${uniqueCategories.length} categories...`
       );
-      toast.loading(
-        `📁 Bulk inserting ${uniqueCategories.length} categories...`,
-        {
-          id: loadingToast,
-        }
-      );
-
-      // Prepare all categories with embeddings
-      const categoriesWithEmbeddings = uniqueCategories.map((categoryName) => {
-        console.log(`\n📁 Category: ${categoryName}`);
-        const embedding = generateCategoryEmbedding(categoryName, "", "", true);
-        // Convert to pgvector format: [0.1,0.2,0.3]
-        const embeddingStr = `[${embedding.join(",")}]`;
-        return { name: categoryName, embedding: embeddingStr };
-      });
-
-      // SINGLE bulk insert for all categories
-      const { data: insertedCategories, error: catError } = await supabase
-        .from("categories")
-        .insert(categoriesWithEmbeddings)
-        .select("id, name");
-
-      if (catError) {
-        console.error("❌ Error bulk inserting categories:", catError);
-        throw catError;
-      }
-
-      // Map category names to IDs
-      insertedCategories.forEach((cat) => {
-        categoryMap.set(cat.name, cat.id);
-      });
-
-      totalInserted += insertedCategories.length;
-      console.log(
-        `\n✅ Step 1 Complete: ${insertedCategories.length} categories saved in 1 API call\n`
-      );
-      toast.loading(
-        `✅ ${insertedCategories.length} categories saved, processing subcategories...`,
-        {
-          id: loadingToast,
-        }
-      );
-
-      // Step 2: BULK Insert Subcategories
-      console.log(`📂 Step 2: Preparing subcategories for bulk insert...`);
-      toast.loading(`📂 Preparing subcategories for bulk insert...`, {
+      toast.loading(`📁 Checking ${uniqueCategories.length} categories...`, {
         id: loadingToast,
       });
 
+      // Fetch existing categories
+      const { data: existingCategories, error: fetchCatError } = await supabase
+        .from("categories")
+        .select("id, name")
+        .in("name", uniqueCategories);
+
+      if (fetchCatError) {
+        console.error("❌ Error fetching existing categories:", fetchCatError);
+        throw fetchCatError;
+      }
+
+      // Map existing categories
+      existingCategories.forEach((cat) => {
+        categoryMap.set(cat.name, cat.id);
+        console.log(`✓ Existing category: ${cat.name} (ID: ${cat.id})`);
+      });
+
+      // Prepare new categories with embeddings
+      const newCategories = uniqueCategories.filter(
+        (name) => !categoryMap.has(name)
+      );
+
+      let insertedCategories = [];
+      if (newCategories.length > 0) {
+        console.log(`\n📁 Inserting ${newCategories.length} new categories...`);
+        toast.loading(
+          `📁 Inserting ${newCategories.length} new categories...`,
+          { id: loadingToast }
+        );
+
+        const categoriesWithEmbeddings = newCategories.map((categoryName) => {
+          console.log(`\n📁 New Category: ${categoryName}`);
+          const embedding = generateCategoryEmbedding(
+            categoryName,
+            "",
+            "",
+            true
+          );
+          const embeddingStr = `[${embedding.join(",")}]`;
+          return { name: categoryName, embedding: embeddingStr };
+        });
+
+        const { data, error: catError } = await supabase
+          .from("categories")
+          .insert(categoriesWithEmbeddings)
+          .select("id, name");
+
+        if (catError) {
+          console.error("❌ Error inserting categories:", catError);
+          throw catError;
+        }
+
+        insertedCategories = data;
+        insertedCategories.forEach((cat) => {
+          categoryMap.set(cat.name, cat.id);
+        });
+
+        totalInserted += insertedCategories.length;
+      } else {
+        console.log(`\n✓ All categories already exist in database`);
+      }
+
+      console.log(
+        `\n✅ Step 1 Complete: ${existingCategories.length} existing + ${insertedCategories.length} new = ${categoryMap.size} total categories\n`
+      );
+      toast.loading(
+        `✅ Categories ready (${existingCategories.length} existing, ${insertedCategories.length} new), processing subcategories...`,
+        {
+          id: loadingToast,
+        }
+      );
+
+      // Step 2: Check existing subcategories and insert only new ones
+      console.log(`📂 Step 2: Checking subcategories...`);
+      toast.loading(`📂 Checking subcategories...`, {
+        id: loadingToast,
+      });
+
+      // Get all category IDs to fetch their subcategories
+      const categoryIds = Array.from(categoryMap.values());
+
+      // Fetch existing subcategories
+      const { data: existingSubcategories, error: fetchSubError } =
+        await supabase
+          .from("subcategories")
+          .select("id, name, category_id")
+          .in("category_id", categoryIds);
+
+      if (fetchSubError) {
+        console.error(
+          "❌ Error fetching existing subcategories:",
+          fetchSubError
+        );
+        throw fetchSubError;
+      }
+
+      // Map existing subcategories
+      existingSubcategories.forEach((sub) => {
+        subcategoryMap.set(`${sub.category_id}_${sub.name}`, sub.id);
+        console.log(`✓ Existing subcategory: ${sub.name} (ID: ${sub.id})`);
+      });
+
+      // Prepare new subcategories
       const subcategoriesWithEmbeddings = [];
-      const subcategoryKeys = []; // To track mapping
 
       for (const [categoryName, subcategories] of Object.entries(
         categoriesData
@@ -254,58 +313,95 @@ const AcesPiesCategorizationTool = () => {
 
         if (subcategories && typeof subcategories === "object") {
           for (const subcategoryName of Object.keys(subcategories)) {
-            console.log(`\n📂 ${categoryName} > ${subcategoryName}`);
-            const embedding = generateCategoryEmbedding(
-              categoryName,
-              subcategoryName,
-              "",
-              true
-            );
-            // Convert to pgvector format
-            const embeddingStr = `[${embedding.join(",")}]`;
+            const subKey = `${categoryId}_${subcategoryName}`;
 
-            subcategoriesWithEmbeddings.push({
-              category_id: categoryId,
-              name: subcategoryName,
-              embedding: embeddingStr,
-            });
+            // Only add if it doesn't exist
+            if (!subcategoryMap.has(subKey)) {
+              console.log(`\n📂 New: ${categoryName} > ${subcategoryName}`);
+              const embedding = generateCategoryEmbedding(
+                categoryName,
+                subcategoryName,
+                "",
+                true
+              );
+              const embeddingStr = `[${embedding.join(",")}]`;
 
-            subcategoryKeys.push({ categoryId, categoryName, subcategoryName });
+              subcategoriesWithEmbeddings.push({
+                category_id: categoryId,
+                name: subcategoryName,
+                embedding: embeddingStr,
+              });
+            }
           }
         }
       }
 
-      // SINGLE bulk insert for all subcategories
-      const { data: insertedSubcategories, error: subError } = await supabase
-        .from("subcategories")
-        .insert(subcategoriesWithEmbeddings)
-        .select("id, name, category_id");
+      let insertedSubcategories = [];
+      if (subcategoriesWithEmbeddings.length > 0) {
+        console.log(
+          `\n📂 Inserting ${subcategoriesWithEmbeddings.length} new subcategories...`
+        );
+        toast.loading(
+          `📂 Inserting ${subcategoriesWithEmbeddings.length} new subcategories...`,
+          { id: loadingToast }
+        );
 
-      if (subError) {
-        console.error("❌ Error bulk inserting subcategories:", subError);
-        throw subError;
+        const { data, error: subError } = await supabase
+          .from("subcategories")
+          .insert(subcategoriesWithEmbeddings)
+          .select("id, name, category_id");
+
+        if (subError) {
+          console.error("❌ Error inserting subcategories:", subError);
+          throw subError;
+        }
+
+        insertedSubcategories = data;
+        insertedSubcategories.forEach((sub) => {
+          subcategoryMap.set(`${sub.category_id}_${sub.name}`, sub.id);
+        });
+
+        totalInserted += insertedSubcategories.length;
+      } else {
+        console.log(`\n✓ All subcategories already exist in database`);
       }
 
-      // Map subcategories to IDs
-      insertedSubcategories.forEach((sub) => {
-        subcategoryMap.set(`${sub.category_id}_${sub.name}`, sub.id);
-      });
-
-      totalInserted += insertedSubcategories.length;
       console.log(
-        `\n✅ Step 2 Complete: ${insertedSubcategories.length} subcategories saved in 1 API call\n`
+        `\n✅ Step 2 Complete: ${existingSubcategories.length} existing + ${insertedSubcategories.length} new = ${subcategoryMap.size} total subcategories\n`
       );
       toast.loading(
-        `✅ ${insertedSubcategories.length} subcategories saved, processing part types...`,
+        `✅ Subcategories ready (${existingSubcategories.length} existing, ${insertedSubcategories.length} new), processing part types...`,
         { id: loadingToast }
       );
 
-      // Step 3: BULK Insert Part Types
-      console.log(`🏷️  Step 3: Preparing part types for bulk insert...`);
-      toast.loading(`🏷️  Preparing part types for bulk insert...`, {
+      // Step 3: Check existing part types and insert only new ones
+      console.log(`🏷️  Step 3: Checking part types...`);
+      toast.loading(`🏷️  Checking part types...`, {
         id: loadingToast,
       });
 
+      // Get all subcategory IDs to fetch their part types
+      const subcategoryIds = Array.from(subcategoryMap.values());
+
+      // Fetch existing part types
+      const { data: existingParttypes, error: fetchPtError } = await supabase
+        .from("parttypes")
+        .select("id, name, subcategory_id")
+        .in("subcategory_id", subcategoryIds);
+
+      if (fetchPtError) {
+        console.error("❌ Error fetching existing part types:", fetchPtError);
+        throw fetchPtError;
+      }
+
+      // Map existing part types
+      const parttypeMap = new Map();
+      existingParttypes.forEach((pt) => {
+        parttypeMap.set(`${pt.subcategory_id}_${pt.name}`, pt.id);
+        console.log(`✓ Existing part type: ${pt.name} (ID: ${pt.id})`);
+      });
+
+      // Prepare new part types
       const parttypesWithEmbeddings = [];
 
       for (const [categoryName, subcategories] of Object.entries(
@@ -323,54 +419,89 @@ const AcesPiesCategorizationTool = () => {
 
             if (Array.isArray(partTypes)) {
               for (const partTypeName of partTypes) {
-                console.log(
-                  `\n🏷️  ${categoryName} > ${subcategoryName} > ${partTypeName}`
-                );
-                const embedding = generateCategoryEmbedding(
-                  categoryName,
-                  subcategoryName,
-                  partTypeName,
-                  true
-                );
-                // Convert to pgvector format
-                const embeddingStr = `[${embedding.join(",")}]`;
+                const ptKey = `${subcategoryId}_${partTypeName}`;
 
-                parttypesWithEmbeddings.push({
-                  subcategory_id: subcategoryId,
-                  name: partTypeName,
-                  embedding: embeddingStr,
-                });
+                // Only add if it doesn't exist
+                if (!parttypeMap.has(ptKey)) {
+                  console.log(
+                    `\n🏷️  New: ${categoryName} > ${subcategoryName} > ${partTypeName}`
+                  );
+                  const embedding = generateCategoryEmbedding(
+                    categoryName,
+                    subcategoryName,
+                    partTypeName,
+                    true
+                  );
+                  const embeddingStr = `[${embedding.join(",")}]`;
+
+                  parttypesWithEmbeddings.push({
+                    subcategory_id: subcategoryId,
+                    name: partTypeName,
+                    embedding: embeddingStr,
+                  });
+                }
               }
             }
           }
         }
       }
 
-      // SINGLE bulk insert for all part types
-      const { data: insertedParttypes, error: ptError } = await supabase
-        .from("parttypes")
-        .insert(parttypesWithEmbeddings)
-        .select("id");
+      let insertedParttypes = [];
+      if (parttypesWithEmbeddings.length > 0) {
+        console.log(
+          `\n🏷️  Inserting ${parttypesWithEmbeddings.length} new part types...`
+        );
+        toast.loading(
+          `🏷️  Inserting ${parttypesWithEmbeddings.length} new part types...`,
+          { id: loadingToast }
+        );
 
-      if (ptError) {
-        console.error("❌ Error bulk inserting part types:", ptError);
-        throw ptError;
+        const { data, error: ptError } = await supabase
+          .from("parttypes")
+          .insert(parttypesWithEmbeddings)
+          .select("id");
+
+        if (ptError) {
+          console.error("❌ Error inserting part types:", ptError);
+          throw ptError;
+        }
+
+        insertedParttypes = data;
+        totalInserted += insertedParttypes.length;
+      } else {
+        console.log(`\n✓ All part types already exist in database`);
       }
 
-      totalInserted += insertedParttypes.length;
       console.log(
-        `\n✅ Step 3 Complete: ${insertedParttypes.length} part types saved in 1 API call\n`
+        `\n✅ Step 3 Complete: ${existingParttypes.length} existing + ${
+          insertedParttypes.length
+        } new = ${
+          existingParttypes.length + insertedParttypes.length
+        } total part types\n`
       );
       console.log("═══════════════════════════════════════════════════");
-      console.log(`🎉 UPLOAD COMPLETE: ${totalInserted} total items saved`);
-      console.log(`   📊 API Calls Made: 3 (instead of ${totalInserted})`);
-      console.log("   - Categories: " + insertedCategories.length);
-      console.log("   - Subcategories: " + insertedSubcategories.length);
-      console.log("   - Part Types: " + insertedParttypes.length);
+      console.log(`🎉 UPLOAD COMPLETE: ${totalInserted} new items added`);
+      console.log(`   - New Categories: ${insertedCategories.length}`);
+      console.log(`   - New Subcategories: ${insertedSubcategories.length}`);
+      console.log(`   - New Part Types: ${insertedParttypes.length}`);
       console.log("═══════════════════════════════════════════════════\n");
 
+      const existingCount =
+        existingCategories.length +
+        existingSubcategories.length +
+        existingParttypes.length;
       toast.success(
-        `✅ Successfully saved ${totalInserted} items in just 3 API calls!\n📁 ${insertedCategories.length} categories | 📂 ${insertedSubcategories.length} subcategories | 🏷️  ${insertedParttypes.length} part types`,
+        totalInserted > 0
+          ? `✅ Added ${totalInserted} new items!\n📁 ${
+              insertedCategories.length
+            } categories | 📂 ${
+              insertedSubcategories.length
+            } subcategories | 🏷️ ${insertedParttypes.length} part types\n${
+              existingCount > 0
+                ? `(${existingCount} items already existed)`
+                : ""
+            }`
+          : `✅ All items already exist in database!\n📁 ${existingCategories.length} categories | 📂 ${existingSubcategories.length} subcategories | 🏷️ ${existingParttypes.length} part types`,
         { id: loadingToast, duration: 5000 }
       );
 
@@ -494,10 +625,50 @@ const AcesPiesCategorizationTool = () => {
       // Step 5: Upload products to database
       toast.loading("Uploading products to database...", { id: loadingToast });
 
+      // OPTIMIZATION: Load ALL categories, subcategories, and parttypes ONCE
+      console.log("📥 Loading category mappings...");
+      const [categoriesResult, subcategoriesResult, parttypesResult] =
+        await Promise.all([
+          supabase.from("categories").select("id, name"),
+          supabase.from("subcategories").select("id, name, category_id"),
+          supabase.from("parttypes").select("id, name, subcategory_id"),
+        ]);
+
+      if (
+        categoriesResult.error ||
+        subcategoriesResult.error ||
+        parttypesResult.error
+      ) {
+        throw new Error("Failed to load category mappings");
+      }
+
+      // Create lookup maps for O(1) access
+      const categoryMap = new Map(
+        categoriesResult.data.map((c) => [c.name.toLowerCase(), c])
+      );
+      const subcategoryMap = new Map(
+        subcategoriesResult.data.map((s) => [
+          `${s.category_id}|${s.name.toLowerCase()}`,
+          s,
+        ])
+      );
+      const parttypeMap = new Map(
+        parttypesResult.data.map((p) => [
+          `${p.subcategory_id}|${p.name.toLowerCase()}`,
+          p,
+        ])
+      );
+
+      console.log(
+        `✅ Loaded ${categoryMap.size} categories, ${subcategoryMap.size} subcategories, ${parttypeMap.size} parttypes`
+      );
+
       let successCount = 0;
       let errorCount = 0;
       const errors = [];
+      const productsToInsert = [];
 
+      // Build bulk insert array with ID lookups
       for (const product of products) {
         // Get product name - MUST NOT BE NULL
         const productName =
@@ -521,85 +692,80 @@ const AcesPiesCategorizationTool = () => {
           ""
         );
 
-        // Find category, subcategory, and parttype IDs from Supabase
-        const categoryName =
-          product.suggestedCategory || product.originalCategory;
-        const subcategoryName =
-          product.suggestedSubcategory || product.originalSubcategory;
-        const parttypeName =
-          product.suggestedPartType || product.originalPartType;
+        // Find category, subcategory, and parttype IDs using maps (O(1) lookups)
+        const categoryName = (
+          product.suggestedCategory ||
+          product.originalCategory ||
+          ""
+        ).toLowerCase();
+        const subcategoryName = (
+          product.suggestedSubcategory ||
+          product.originalSubcategory ||
+          ""
+        ).toLowerCase();
+        const parttypeName = (
+          product.suggestedPartType ||
+          product.originalPartType ||
+          ""
+        ).toLowerCase();
 
-        const { data: categoryData, error: catErr } = await supabase
-          .from("categories")
-          .select("id")
-          .eq("name", categoryName)
-          .single();
-
-        if (catErr) {
+        const category = categoryMap.get(categoryName);
+        if (!category) {
           const errorMsg = `Category not found: "${categoryName}" for product: ${productName}`;
-          console.error(errorMsg, catErr);
-          errors.push(errorMsg);
-          errorCount++;
-          continue;
-        }
-
-        const { data: subcategoryData, error: subErr } = await supabase
-          .from("subcategories")
-          .select("id")
-          .eq("name", subcategoryName)
-          .eq("category_id", categoryData?.id)
-          .single();
-
-        if (subErr) {
-          const errorMsg = `Subcategory not found: "${subcategoryName}" in "${categoryName}" for product: ${productName}`;
-          console.error(errorMsg, subErr);
-          errors.push(errorMsg);
-          errorCount++;
-          continue;
-        }
-
-        const { data: parttypeData, error: ptErr } = await supabase
-          .from("parttypes")
-          .select("id")
-          .eq("name", parttypeName)
-          .eq("subcategory_id", subcategoryData?.id)
-          .single();
-
-        if (ptErr) {
-          const errorMsg = `Parttype not found: "${parttypeName}" in "${subcategoryName}" for product: ${productName}`;
-          console.error(errorMsg, ptErr);
-          errors.push(errorMsg);
-          errorCount++;
-          continue;
-        }
-
-        if (!categoryData || !subcategoryData || !parttypeData) {
-          const errorMsg = `Missing category data for product: ${productName} (cat: ${categoryName}, sub: ${subcategoryName}, pt: ${parttypeName})`;
           console.error(errorMsg);
           errors.push(errorMsg);
           errorCount++;
           continue;
         }
 
-        // Insert product with file reference - name is REQUIRED and cannot be null
-        const { error } = await supabase.from("products").insert({
-          name: productName, // This is guaranteed to be non-null from the check above
+        const subcategory = subcategoryMap.get(
+          `${category.id}|${subcategoryName}`
+        );
+        if (!subcategory) {
+          const errorMsg = `Subcategory not found: "${subcategoryName}" in "${categoryName}" for product: ${productName}`;
+          console.error(errorMsg);
+          errors.push(errorMsg);
+          errorCount++;
+          continue;
+        }
+
+        const parttype = parttypeMap.get(`${subcategory.id}|${parttypeName}`);
+        if (!parttype) {
+          const errorMsg = `Parttype not found: "${parttypeName}" in "${subcategoryName}" for product: ${productName}`;
+          console.error(errorMsg);
+          errors.push(errorMsg);
+          errorCount++;
+          continue;
+        }
+
+        productsToInsert.push({
+          name: productName,
           description: product.description || "",
           sku: product.sku || product.partNumber || null,
-          category_id: categoryData.id,
-          subcategory_id: subcategoryData.id,
-          parttype_id: parttypeData.id,
+          category_id: category.id,
+          subcategory_id: subcategory.id,
+          parttype_id: parttype.id,
           upload_history_id: uploadHistoryId,
           file_url: fileUrl,
           embedding,
         });
+      }
 
-        if (error) {
-          console.error("Error inserting product:", error);
-          errorCount++;
-          errors.push(error.message);
+      // BULK INSERT: Insert all products in one API call
+      if (productsToInsert.length > 0) {
+        console.log(`🚀 Bulk inserting ${productsToInsert.length} products...`);
+        const { data: insertedData, error: insertError } = await supabase
+          .from("products")
+          .insert(productsToInsert)
+          .select();
+
+        if (insertError) {
+          console.error("❌ Bulk insert error:", insertError);
+          errorCount += productsToInsert.length;
+          errors.push(insertError.message);
         } else {
-          successCount++;
+          successCount = insertedData?.length || productsToInsert.length;
+          console.log(`✅ Successfully inserted ${successCount} products`);
         }
       }
 
@@ -634,12 +800,13 @@ const AcesPiesCategorizationTool = () => {
           { id: loadingToast, duration: 5000 }
         );
 
-        // Clear products state after successful upload
+        // Keep file info visible after successful upload
+        // Only clear the ready-for-upload flag and products data
         dispatch(setReduxProductsReadyForUpload(false));
         dispatch(setReduxProducts([]));
-        setProductsFileInfo(null);
-        setLastUploadedFileInfo(null);
-        setLastUploadType(null);
+        setLastUploadedFileInfo(productsFileInfo); // Save the uploaded file info
+        setLastUploadType("products");
+        // DON'T clear productsFileInfo - keep it visible
       } else {
         toast.error(
           `❌ Failed to upload: ${errorCount} errors. Check console for details.`,
@@ -695,6 +862,7 @@ const AcesPiesCategorizationTool = () => {
     }));
 
     setIsProcessing(true);
+    setCategorizationMethod("vector");
 
     // Check if batching is needed
     const needsBatching = totalProducts > BATCH_SIZE;
@@ -844,6 +1012,7 @@ const AcesPiesCategorizationTool = () => {
       });
     } finally {
       setIsProcessing(false);
+      setCategorizationMethod(null);
     }
   };
 
@@ -1039,6 +1208,100 @@ const AcesPiesCategorizationTool = () => {
 
     // Always use edge function for vector-based categorization
     return assignCategoriesViaEdgeFunction();
+  };
+
+  // OpenAI Auto-Suggest Handler
+  const handleOpenAISuggest = async () => {
+    if (products.length === 0) {
+      toast.error("Please upload products first");
+      return;
+    }
+
+    console.log("\n═══════════════════════════════════════════════════");
+    console.log("🤖 OPENAI AUTO-SUGGEST CATEGORIZATION");
+    console.log("═══════════════════════════════════════════════════");
+    console.log("📊 Products to categorize:", products.length);
+    console.log("🎯 Using: OpenAI GPT Model");
+    console.log("═══════════════════════════════════════════════════\n");
+
+    setIsProcessing(true);
+    setCategorizationMethod("openai");
+    const loadingToast = toast.loading(
+      "🤖 Auto-suggesting categories with OpenAI..."
+    );
+
+    try {
+      // Use the current active categories (ACES or custom)
+      const categoriesToUse =
+        activeCategories === "user" && userCategories
+          ? userCategories
+          : acesCategories;
+
+      console.log(
+        `Using ${
+          activeCategories === "user" ? "Custom" : "ACES"
+        } categories for OpenAI`
+      );
+
+      // Call OpenAI batch categorization
+      const { results, stats } = await batchCategorizeWithOpenAI(
+        products,
+        (completed, total, currentBatch, totalBatches) => {
+          const percentage = Math.round((completed / total) * 100);
+          toast.loading(
+            `🤖 OpenAI Processing: Batch ${currentBatch}/${totalBatches} - ${completed}/${total} products (${percentage}%)`,
+            { id: loadingToast }
+          );
+        },
+        categoriesToUse
+      );
+
+      console.log("✅ OpenAI categorization complete:", stats);
+
+      // Calculate average confidence
+      const confidences = results
+        .map((r) => r.confidence || 0)
+        .filter((c) => c > 0);
+      const avgConfidence =
+        confidences.length > 0
+          ? Math.round(
+              confidences.reduce((a, b) => a + b, 0) / confidences.length
+            )
+          : 0;
+
+      // Update products with AI suggestions
+      const updatedProducts = results.map((result) => ({
+        ...result,
+        suggestedCategory: result.suggestedCategory || "",
+        suggestedSubcategory: result.suggestedSubcategory || "",
+        suggestedPartType: result.suggestedPartType || "",
+        confidence: result.confidence || 0,
+        status:
+          result.confidence >= 80
+            ? "high-confidence"
+            : result.confidence >= 60
+            ? "needs-review"
+            : "low-confidence",
+      }));
+
+      dispatch(setReduxProducts(updatedProducts));
+      dispatch(setReduxProductsReadyForUpload(true));
+
+      const highConfidence = confidences.filter((c) => c >= 80).length;
+      toast.success(
+        `✅ OpenAI categorized ${results.length} products! Avg: ${avgConfidence}% | ${highConfidence} high confidence (≥80%)`,
+        { id: loadingToast, duration: 5000 }
+      );
+    } catch (error) {
+      console.error("❌ OpenAI categorization error:", error);
+      toast.error(`❌ OpenAI categorization failed: ${error.message}`, {
+        id: loadingToast,
+      });
+      setApiError(error);
+    } finally {
+      setIsProcessing(false);
+      setCategorizationMethod(null);
+    }
   };
 
   // OLD METHODS REMOVED - Now using professional vector-based categorization via edge function
@@ -1414,7 +1677,9 @@ const AcesPiesCategorizationTool = () => {
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-medium text-blue-900">
-                  Vector Similarity Categorization in Progress...
+                  {categorizationMethod === "openai"
+                    ? "OpenAI Categorization in Progress..."
+                    : "Vector Similarity Categorization in Progress..."}
                 </span>
                 <span className="text-blue-700 flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1430,13 +1695,23 @@ const AcesPiesCategorizationTool = () => {
                 />
               </div>
               <div className="mt-1 text-xs text-blue-600">
-                Using vector embeddings for semantic matching
+                {categorizationMethod === "openai"
+                  ? "Using OpenAI GPT for intelligent categorization"
+                  : "Using vector embeddings for semantic matching"}
               </div>
             </div>
           )}
 
           <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
             <div className="flex flex-wrap gap-4">
+              <button
+                onClick={handleOpenAISuggest}
+                disabled={isProcessing || products.length === 0}
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all font-medium"
+              >
+                <Zap className="w-4 h-4" />
+                {isProcessing ? `AI Suggesting...` : `OpenAI Auto-Suggest`}
+              </button>
               <button
                 onClick={autoSuggestAll}
                 disabled={isProcessing}
@@ -1465,13 +1740,13 @@ const AcesPiesCategorizationTool = () => {
                 Categories Assign
               </button>
 
-              <button
+              {/* <button
                 onClick={checkSupabaseData}
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm"
               >
                 <Search className="w-4 h-4" />
                 Check DB
-              </button>
+              </button> */}
 
               {productsReadyForUpload && products.length > 0 && (
                 <button

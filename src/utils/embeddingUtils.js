@@ -2,6 +2,17 @@
 // Professional vector embedding service for category and product matching
 
 /**
+ * EMBEDDING SYSTEM: Custom Hash-Based TF-IDF Implementation
+ * Note: This is NOT a neural model like MiniLM-v2, but a fast hash-based system
+ * For true semantic embeddings, consider:
+ * - OpenAI Embeddings API (paid, best quality)
+ * - Transformers.js with MiniLM (free, good quality, heavier)
+ * - Sentence Transformers API (paid, excellent quality)
+ *
+ * Current system: Fast, free, deterministic, works well for keyword-based matching
+ */
+
+/**
  * Simple hash function for consistent feature mapping
  * @param {string} str - String to hash
  * @param {number} seed - Seed value for hashing
@@ -52,7 +63,7 @@ const tokenize = (text) => {
  * @param {boolean} verbose - Enable detailed logging
  * @returns {number[]} embedding vector
  */
-export const generateEmbedding = (text, dimension = 768, verbose = false) => {
+export const generateEmbedding = (text, dimension = 384, verbose = false) => {
   if (!text || typeof text !== "string") {
     if (verbose) console.log("⚠️  Empty text provided, returning zero vector");
     return new Array(dimension).fill(0);
@@ -151,7 +162,7 @@ export const generateCategoryEmbedding = (
     console.log(`\n📁 Category: ${hierarchy}`);
   }
 
-  return generateEmbedding(combinedText, 768, verbose);
+  return generateEmbedding(combinedText, 384, verbose);
 };
 
 /**

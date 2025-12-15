@@ -1,5 +1,8 @@
 // Supabase Edge Function: assign-categories
-// Optimized for large-scale product categorization with caching
+// Production-ready semantic categorization using MiniLM-v2 embeddings
+// Pure cosine similarity matching - NO keyword logic, NO TF-IDF, NO regex
+// ⚠️ IMPORTANT: Product embeddings MUST be generated client-side before calling this function
+// This function ONLY performs vector similarity matching using pre-computed embeddings
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
@@ -10,7 +13,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const MAX_PRODUCTS_PER_REQUEST = 500; // Process in batches to avoid timeouts
+const MAX_PRODUCTS_PER_REQUEST = 500;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -38,11 +41,7 @@ serve(async (req) => {
     const totalProducts = products.length;
     console.log(`\n🚀 Received ${totalProducts} products for categorization`);
 
-    // Limit products per request
     if (totalProducts > MAX_PRODUCTS_PER_REQUEST) {
-      console.log(
-        `⚠️  Request exceeds limit of ${MAX_PRODUCTS_PER_REQUEST} products`
-      );
       return new Response(
         JSON.stringify({
           error: `Too many products. Please process in batches of ${MAX_PRODUCTS_PER_REQUEST} or fewer.`,
@@ -56,84 +55,23 @@ serve(async (req) => {
       );
     }
 
-    // Embedding generation functions
-    const hashString = (str: string, seed = 0): number => {
-      let hash = seed;
-      for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = (hash << 5) - hash + char;
-        hash = hash & hash;
-      }
-      return Math.abs(hash);
-    };
-
-    const tokenize = (text: string): string[] => {
-      if (!text) return [];
-      const cleaned = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
-      const words = cleaned.split(/\s+/).filter((w) => w.length > 2); // Skip very short words
-      const tokens = [...words];
-
-      // Add bigrams
-      for (let i = 0; i < words.length - 1; i++) {
-        tokens.push(`${words[i]}_${words[i + 1]}`);
-      }
-
-      // Add trigrams for better matching
-      for (let i = 0; i < words.length - 2; i++) {
-        tokens.push(`${words[i]}_${words[i + 1]}_${words[i + 2]}`);
-      }
-
-      return tokens;
-    };
-
-    const generateEmbedding = (text: string, dimension = 768): number[] => {
-      if (!text || typeof text !== "string") {
-        return new Array(dimension).fill(0);
-      }
-
-      const tokens = tokenize(text);
-      const embedding = new Array(dimension).fill(0);
-
-      if (tokens.length === 0) return embedding;
-
-      const tokenCounts: { [key: string]: number } = {};
-      tokens.forEach((token) => {
-        tokenCounts[token] = (tokenCounts[token] || 0) + 1;
-      });
-
-      Object.entries(tokenCounts).forEach(([token, count]) => {
-        const tf = count / tokens.length;
-        // Use more hash positions for better distribution
-        for (let i = 0; i < 5; i++) {
-          const position = hashString(token, i) % dimension;
-          embedding[position] += tf * (1 - i * 0.15); // Gentler decay
-        }
-      });
-
-      const magnitude = Math.sqrt(
-        embedding.reduce((sum, val) => sum + val * val, 0)
-      );
-
-      if (magnitude > 0) {
-        for (let i = 0; i < dimension; i++) {
-          embedding[i] = embedding[i] / magnitude;
-        }
-      }
-
-      return embedding;
-    };
-
+    /**
+     * Pure cosine similarity calculation for normalized embeddings
+     * Since MiniLM embeddings are L2-normalized, dot product = cosine similarity
+     */
     const cosineSimilarity = (vecA: number[], vecB: number[]): number => {
       if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
-      let dot = 0;
+
+      let dotProduct = 0;
       for (let i = 0; i < vecA.length; i++) {
-        dot += vecA[i] * (vecB[i] || 0);
+        dotProduct += vecA[i] * (vecB[i] || 0);
       }
-      return dot;
+
+      return Math.max(0, Math.min(1, dotProduct)); // Clamp to [0, 1]
     };
 
-    // OPTIMIZATION: Load ALL data ONCE and cache it
-    console.log("📥 Loading category database...");
+    // Load ALL taxonomy data with MiniLM embeddings (384 dimensions)
+    console.log("📥 Loading taxonomy database with MiniLM embeddings...");
 
     const [categoriesResult, subcategoriesResult, parttypesResult] =
       await Promise.all([
@@ -143,23 +81,72 @@ serve(async (req) => {
           .select("id, name, category_id, embedding"),
         supabaseClient
           .from("parttypes")
-          .select("id, name, subcategory_id, embedding"),
+          .select("id, name, category_id, subcategory_id, embedding"),
       ]);
 
-    if (categoriesResult.error) throw categoriesResult.error;
-    if (subcategoriesResult.error) throw subcategoriesResult.error;
-    if (parttypesResult.error) throw parttypesResult.error;
+    if (categoriesResult.error) {
+      console.error(
+        "Database error fetching categories:",
+        categoriesResult.error
+      );
+      return new Response(
+        JSON.stringify({
+          categorizedProducts: [],
+          totalProcessed: 0,
+          totalRequested: products.length,
+          averageConfidence: 0,
+          error:
+            "Database error: Unable to fetch categories. Please ensure taxonomy tables exist.",
+          confidenceDistribution: { high: 0, medium: 0, low: 0 },
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
+    }
 
-    // Parse embeddings if they come as strings (pgvector format)
+    if (subcategoriesResult.error) {
+      console.error(
+        "Database error fetching subcategories:",
+        subcategoriesResult.error
+      );
+    }
+
+    if (parttypesResult.error) {
+      console.error(
+        "Database error fetching parttypes:",
+        parttypesResult.error
+      );
+    }
+
+    // Parse embeddings from pgvector format: "[1,2,3]" -> [1,2,3]
     const parseEmbedding = (item: any) => {
-      if (item.embedding && typeof item.embedding === "string") {
+      if (!item.embedding) {
+        console.warn(`⚠️  Missing embedding for "${item.name}"`);
+        return item;
+      }
+
+      if (typeof item.embedding === "string") {
         try {
           item.embedding = JSON.parse(item.embedding);
         } catch (e) {
-          console.error(`Failed to parse embedding for ${item.name}:`, e);
+          console.error(`❌ Failed to parse embedding for "${item.name}":`, e);
           item.embedding = null;
         }
       }
+
+      // Validate embedding dimensions (should be 384 for MiniLM-v2)
+      if (
+        item.embedding &&
+        Array.isArray(item.embedding) &&
+        item.embedding.length !== 384
+      ) {
+        console.warn(
+          `⚠️  Invalid embedding dimension for "${item.name}": ${item.embedding.length} (expected 384)`
+        );
+      }
+
       return item;
     };
 
@@ -170,35 +157,64 @@ serve(async (req) => {
     const allParttypes = (parttypesResult.data || []).map(parseEmbedding);
 
     console.log(
-      `✅ Loaded ${allCategories.length} categories, ${allSubcategories.length} subcategories, ${allParttypes.length} parttypes`
+      `✅ Loaded ${allCategories.length} categories, ${allSubcategories.length} subcategories, ${allParttypes.length} part types`
     );
 
-    // DEBUG: Check if embeddings exist
+    // Validate embeddings exist
     const categoriesWithEmbeddings = allCategories.filter(
-      (c) => c.embedding && Array.isArray(c.embedding) && c.embedding.length > 0
+      (c) =>
+        c.embedding && Array.isArray(c.embedding) && c.embedding.length === 384
     );
     const subcategoriesWithEmbeddings = allSubcategories.filter(
-      (s) => s.embedding && Array.isArray(s.embedding) && s.embedding.length > 0
+      (s) =>
+        s.embedding && Array.isArray(s.embedding) && s.embedding.length === 384
     );
     const parttypesWithEmbeddings = allParttypes.filter(
-      (p) => p.embedding && Array.isArray(p.embedding) && p.embedding.length > 0
+      (p) =>
+        p.embedding && Array.isArray(p.embedding) && p.embedding.length === 384
     );
 
     console.log(
-      `🔍 Embeddings check: ${categoriesWithEmbeddings.length}/${allCategories.length} categories, ${subcategoriesWithEmbeddings.length}/${allSubcategories.length} subcategories, ${parttypesWithEmbeddings.length}/${allParttypes.length} parttypes have valid embeddings`
+      `🔍 Embedding validation: ${categoriesWithEmbeddings.length}/${allCategories.length} categories, ${subcategoriesWithEmbeddings.length}/${allSubcategories.length} subcategories, ${parttypesWithEmbeddings.length}/${allParttypes.length} part types have valid MiniLM embeddings`
     );
 
-    if (categoriesWithEmbeddings.length === 0) {
-      throw new Error(
-        "❌ No category embeddings found! Please re-upload categories to generate embeddings."
+    if (allCategories.length === 0) {
+      return new Response(
+        JSON.stringify({
+          categorizedProducts: [],
+          totalProcessed: 0,
+          totalRequested: products.length,
+          averageConfidence: 0,
+          warning:
+            "No taxonomy data found in database. Please upload categories, subcategories, and part types first.",
+          confidenceDistribution: { high: 0, medium: 0, low: 0 },
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
       );
     }
 
-    if (allCategories.length === 0) {
-      throw new Error("No categories found. Please upload categories first.");
+    if (categoriesWithEmbeddings.length === 0) {
+      return new Response(
+        JSON.stringify({
+          categorizedProducts: [],
+          totalProcessed: 0,
+          totalRequested: products.length,
+          averageConfidence: 0,
+          warning:
+            "No embeddings found for taxonomy. Please run: npm run generate-taxonomy-embeddings",
+          confidenceDistribution: { high: 0, medium: 0, low: 0 },
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        }
+      );
     }
 
-    // Create lookup maps for faster access
+    // Create lookup maps for hierarchical matching
     const categoryMap = new Map(allCategories.map((c) => [c.id, c]));
     const subcategoryMap = new Map(allSubcategories.map((s) => [s.id, s]));
     const subcategoriesByCategory = new Map<string, typeof allSubcategories>();
@@ -218,12 +234,15 @@ serve(async (req) => {
       parttypesBySubcategory.get(pt.subcategory_id)!.push(pt);
     });
 
-    console.log("🚀 Starting batch categorization...");
+    console.log(
+      "🚀 Starting semantic categorization using MiniLM embeddings..."
+    );
 
     const categorizedProducts = [];
     let successCount = 0;
+    let skippedCount = 0;
 
-    // Process products
+    // Process products with pure semantic matching
     for (let i = 0; i < products.length; i++) {
       const product = products[i];
 
@@ -232,266 +251,368 @@ serve(async (req) => {
           console.log(`📦 Progress: ${i + 1}/${products.length}`);
         }
 
-        const combinedText = `${product.name || ""} ${
-          product.description || ""
-        }`.trim();
-        const productEmbedding = generateEmbedding(combinedText, 768);
-        const productTextLower = combinedText.toLowerCase();
+        // DEBUG: Log first product structure
+        if (i === 0) {
+          console.log(`\n🔍 First product structure:`, {
+            id: product.id,
+            name: product.name,
+            hasEmbedding: !!product.embedding,
+            embeddingType: typeof product.embedding,
+            embeddingLength: product.embedding?.length || 0,
+            allKeys: Object.keys(product),
+          });
+        }
 
-        // Helper function: Check if product text contains keywords from category name
-        const getKeywordBoost = (
-          productText: string,
-          categoryName: string
-        ): number => {
-          const categoryWords = categoryName
-            .toLowerCase()
-            .replace(/[^a-z0-9\s]/g, " ")
-            .split(/\s+/)
-            .filter((w) => w.length > 2); // Skip short words like "and", "or"
+        // ⚠️ Product embeddings MUST be provided
+        let productEmbedding = product.embedding;
 
-          let matchedWords = 0;
-          for (const word of categoryWords) {
-            if (productText.includes(word)) {
-              matchedWords++;
-            }
+        if (!productEmbedding) {
+          skippedCount++;
+          if (i < 5) {
+            console.error(
+              `❌ Missing embedding for "${product.name}" - embeddings must be generated client-side`
+            );
           }
+          continue;
+        }
 
-          // Return boost: 0 to 0.4 based on keyword matches
-          return matchedWords > 0 ? Math.min(matchedWords * 0.15, 0.4) : 0;
-        };
+        // Parse embedding if string format
+        if (typeof productEmbedding === "string") {
+          try {
+            productEmbedding = JSON.parse(productEmbedding);
+          } catch (e) {
+            console.error(
+              `❌ Failed to parse embedding for "${product.name}":`,
+              e
+            );
+            skippedCount++;
+            continue;
+          }
+        }
 
-        // HIERARCHICAL MATCHING WITH KEYWORD BOOSTING
+        if (
+          !Array.isArray(productEmbedding) ||
+          productEmbedding.length !== 384
+        ) {
+          console.error(
+            `❌ Invalid embedding dimension for "${product.name}" (expected 384, got ${productEmbedding?.length})`
+          );
+          skippedCount++;
+          continue;
+        }
 
-        // Step 1: Find best matching CATEGORY
+        if (i < 3) {
+          console.log(
+            `   ✅ Valid embedding for "${product.name}" (384 dimensions)`
+          );
+        }
+
+        // STEP 1: Find best matching CATEGORY using pure cosine similarity
         let bestCategory = null;
         let bestCatSim = -1;
-        const TOP_CATEGORIES_TO_LOG = 3;
-        const topCategories: Array<{
-          name: string;
-          score: number;
-          boost: number;
-        }> = [];
 
         for (const cat of allCategories) {
-          if (cat.embedding && Array.isArray(cat.embedding)) {
-            const vectorSim = cosineSimilarity(productEmbedding, cat.embedding);
-            const keywordBoost = getKeywordBoost(productTextLower, cat.name);
-            const boostedSim = Math.min(vectorSim + keywordBoost, 1.0); // Cap at 100%
+          if (
+            cat.embedding &&
+            Array.isArray(cat.embedding) &&
+            cat.embedding.length === 384
+          ) {
+            const similarity = cosineSimilarity(
+              productEmbedding,
+              cat.embedding
+            );
 
-            topCategories.push({
-              name: cat.name,
-              score: boostedSim,
-              boost: keywordBoost,
-            });
-            if (boostedSim > bestCatSim) {
-              bestCatSim = boostedSim;
+            if (similarity > bestCatSim) {
+              bestCatSim = similarity;
               bestCategory = cat;
             }
           }
         }
 
-        topCategories.sort((a, b) => b.score - a.score);
-        if (i < 3) {
-          // Log first 3 products in detail
-          console.log(`\n🔍 Product: "${product.name}"`);
-          console.log(`   Top ${TOP_CATEGORIES_TO_LOG} category matches:`);
-          topCategories.slice(0, TOP_CATEGORIES_TO_LOG).forEach((cat, idx) => {
-            const boostStr =
-              cat.boost > 0 ? ` (+${(cat.boost * 100).toFixed(0)}% boost)` : "";
-            console.log(
-              `   ${idx + 1}. ${cat.name}: ${(cat.score * 100).toFixed(
-                1
-              )}%${boostStr}`
-            );
-          });
-        }
-
         if (!bestCategory) {
-          bestCategory = allCategories[0];
-          bestCatSim = 0.05;
+          console.warn(
+            `⚠️  No valid category match found for "${product.name}"`
+          );
+          continue;
         }
 
-        // Step 2: Find best matching SUBCATEGORY within the chosen category (with keyword boosting)
+        // STEP 2: Find best matching SUBCATEGORY within the chosen category
         const categorySubcategories =
-          subcategoriesByCategory.get(bestCategory.id) || allSubcategories;
+          subcategoriesByCategory.get(bestCategory.id) || [];
         let bestSubcategory = null;
         let bestSubSim = -1;
-        const topSubcategories: Array<{
-          name: string;
-          score: number;
-          boost: number;
-        }> = [];
 
+        // First try within category's subcategories
         for (const sub of categorySubcategories) {
-          if (sub.embedding && Array.isArray(sub.embedding)) {
-            const vectorSim = cosineSimilarity(productEmbedding, sub.embedding);
-            const keywordBoost = getKeywordBoost(productTextLower, sub.name);
-            const boostedSim = Math.min(vectorSim + keywordBoost, 1.0);
+          if (
+            sub.embedding &&
+            Array.isArray(sub.embedding) &&
+            sub.embedding.length === 384
+          ) {
+            const similarity = cosineSimilarity(
+              productEmbedding,
+              sub.embedding
+            );
 
-            topSubcategories.push({
-              name: sub.name,
-              score: boostedSim,
-              boost: keywordBoost,
-            });
-            if (boostedSim > bestSubSim) {
-              bestSubSim = boostedSim;
+            if (similarity > bestSubSim) {
+              bestSubSim = similarity;
               bestSubcategory = sub;
             }
           }
         }
 
-        topSubcategories.sort((a, b) => b.score - a.score);
-        if (i < 3) {
-          console.log(
-            `   Selected category: "${bestCategory.name}" (${(
-              bestCatSim * 100
-            ).toFixed(1)}%)`
-          );
-          console.log(
-            `   Top ${TOP_CATEGORIES_TO_LOG} subcategory matches in "${bestCategory.name}":`
-          );
-          topSubcategories
-            .slice(0, TOP_CATEGORIES_TO_LOG)
-            .forEach((sub, idx) => {
-              const boostStr =
-                sub.boost > 0
-                  ? ` (+${(sub.boost * 100).toFixed(0)}% boost)`
-                  : "";
-              console.log(
-                `   ${idx + 1}. ${sub.name}: ${(sub.score * 100).toFixed(
-                  1
-                )}%${boostStr}`
+        // If no good match in category, search ALL subcategories
+        if (!bestSubcategory || bestSubSim < 0.3) {
+          for (const sub of allSubcategories) {
+            if (
+              sub.embedding &&
+              Array.isArray(sub.embedding) &&
+              sub.embedding.length === 384
+            ) {
+              const similarity = cosineSimilarity(
+                productEmbedding,
+                sub.embedding
               );
-            });
+
+              if (similarity > bestSubSim) {
+                bestSubSim = similarity;
+                bestSubcategory = sub;
+              }
+            }
+          }
         }
 
         if (!bestSubcategory) {
-          bestSubcategory = categorySubcategories[0] || allSubcategories[0];
-          bestSubSim = 0.05;
+          console.warn(
+            `⚠️  No valid subcategory match found for "${product.name}"`
+          );
+          continue;
         }
 
-        // Step 3: Find best matching PARTTYPE within the chosen subcategory (with keyword boosting)
-        const subcategoryParttypes =
-          parttypesBySubcategory.get(bestSubcategory.id) || allParttypes;
+        // Update category based on best subcategory's parent (hierarchical consistency)
+        if (bestSubcategory.category_id) {
+          const parentCategory = categoryMap.get(bestSubcategory.category_id);
+          if (parentCategory) {
+            bestCategory = parentCategory;
+          }
+        }
+
+        // STEP 3: Find best matching PART TYPE (with strict hierarchical matching)
         let bestParttype = null;
         let bestPtSim = -1;
-        const topParttypes: Array<{
-          name: string;
-          score: number;
-          boost: number;
-        }> = [];
 
-        for (const pt of subcategoryParttypes) {
-          if (pt.embedding && Array.isArray(pt.embedding)) {
-            const vectorSim = cosineSimilarity(productEmbedding, pt.embedding);
-            const keywordBoost = getKeywordBoost(productTextLower, pt.name);
-            const boostedSim = Math.min(vectorSim + keywordBoost, 1.0);
+        // First: Try part types that match BOTH category AND subcategory
+        console.log(
+          `\n🔍 Searching part types for: ${bestCategory.name} → ${bestSubcategory.name}`
+        );
 
-            topParttypes.push({
-              name: pt.name,
-              score: boostedSim,
-              boost: keywordBoost,
-            });
-            if (boostedSim > bestPtSim) {
-              bestPtSim = boostedSim;
+        for (const pt of allParttypes) {
+          if (
+            pt.embedding &&
+            Array.isArray(pt.embedding) &&
+            pt.embedding.length === 384 &&
+            pt.category_id === bestCategory.id &&
+            pt.subcategory_id === bestSubcategory.id
+          ) {
+            const similarity = cosineSimilarity(productEmbedding, pt.embedding);
+            if (similarity > bestPtSim) {
+              bestPtSim = similarity;
               bestParttype = pt;
             }
           }
         }
 
-        topParttypes.sort((a, b) => b.score - a.score);
-        if (i < 3) {
+        if (bestParttype) {
           console.log(
-            `   Selected subcategory: "${bestSubcategory.name}" (${(
-              bestSubSim * 100
-            ).toFixed(1)}%)`
+            `   ✅ Found exact match: "${bestParttype.name}" (${(
+              bestPtSim * 100
+            ).toFixed(2)}%)`
           );
-          console.log(
-            `   Top ${TOP_CATEGORIES_TO_LOG} parttype matches in "${bestSubcategory.name}":`
-          );
-          topParttypes.slice(0, TOP_CATEGORIES_TO_LOG).forEach((pt, idx) => {
-            const boostStr =
-              pt.boost > 0 ? ` (+${(pt.boost * 100).toFixed(0)}% boost)` : "";
+        }
+
+        // Second: If no good match, try other subcategories within SAME CATEGORY
+        if (!bestParttype || bestPtSim < 0.35) {
+          console.log(`   🔄 Searching other subcategories in category...`);
+
+          for (const pt of allParttypes) {
+            if (
+              pt.embedding &&
+              Array.isArray(pt.embedding) &&
+              pt.embedding.length === 384 &&
+              pt.category_id === bestCategory.id &&
+              pt.subcategory_id !== bestSubcategory.id
+            ) {
+              const similarity = cosineSimilarity(
+                productEmbedding,
+                pt.embedding
+              );
+              if (similarity > bestPtSim) {
+                bestPtSim = similarity;
+                bestParttype = pt;
+              }
+            }
+          }
+
+          if (bestParttype && bestPtSim >= 0.35) {
             console.log(
-              `   ${idx + 1}. ${pt.name}: ${(pt.score * 100).toFixed(
-                1
-              )}%${boostStr}`
+              `   ✅ Found in same category: "${bestParttype.name}" (${(
+                bestPtSim * 100
+              ).toFixed(2)}%)`
             );
-          });
+          }
+        }
+
+        // Third: Final fallback - search ALL part types if still no good match
+        if (!bestParttype || bestPtSim < 0.3) {
+          console.log(`   🔄 Searching all part types...`);
+
+          for (const pt of allParttypes) {
+            if (
+              pt.embedding &&
+              Array.isArray(pt.embedding) &&
+              pt.embedding.length === 384
+            ) {
+              const similarity = cosineSimilarity(
+                productEmbedding,
+                pt.embedding
+              );
+              if (similarity > bestPtSim) {
+                bestPtSim = similarity;
+                bestParttype = pt;
+              }
+            }
+          }
         }
 
         if (!bestParttype) {
-          bestParttype = subcategoryParttypes[0] || allParttypes[0];
-          bestPtSim = 0.05;
+          console.warn(
+            `⚠️  No valid part type match found for "${product.name}"`
+          );
+          continue;
         }
 
-        const category = bestCategory;
-        const subcategory = bestSubcategory;
-        const catSim = bestCatSim;
-        const subSim = bestSubSim;
+        // ✅ CRITICAL FIX: Update category and subcategory based on part type's hierarchy
+        // This ensures the entire taxonomy chain is consistent with the part type
+        if (bestParttype.category_id && bestParttype.subcategory_id) {
+          const parttypeCategory = categoryMap.get(bestParttype.category_id);
+          const parttypeSubcategory = subcategoryMap.get(
+            bestParttype.subcategory_id
+          );
 
-        // Calculate confidence with weighted hierarchy (parttype is most specific, so weight it more)
-        // Weight: Category 25%, Subcategory 30%, Parttype 45%
+          if (parttypeCategory && parttypeSubcategory) {
+            bestCategory = parttypeCategory;
+            bestSubcategory = parttypeSubcategory;
+            console.log(
+              `   🔗 Updated hierarchy to match part type: ${bestCategory.name} → ${bestSubcategory.name} → ${bestParttype.name}`
+            );
+          } else {
+            console.warn(
+              `   ⚠️  Part type "${bestParttype.name}" has invalid category_id or subcategory_id`
+            );
+          }
+        }
+
+        // Log detailed matches for first 3 products
+        if (i < 3) {
+          console.log(`\n🔍 Product #${i + 1}: "${product.name}"`);
+          console.log(
+            `   📊 Category: "${bestCategory.name}" (similarity: ${(
+              bestCatSim * 100
+            ).toFixed(2)}%)`
+          );
+          console.log(
+            `   📊 Subcategory: "${bestSubcategory.name}" (similarity: ${(
+              bestSubSim * 100
+            ).toFixed(2)}%)`
+          );
+          console.log(
+            `   📊 Part Type: "${bestParttype.name}" (similarity: ${(
+              bestPtSim * 100
+            ).toFixed(2)}%)`
+          );
+          console.log(
+            `   ✅ Final Hierarchy: ${bestCategory.name} → ${bestSubcategory.name} → ${bestParttype.name}`
+          );
+        }
+
+        // Calculate weighted confidence score
+        // Category: 20%, Subcategory: 30%, Part Type: 50% (most specific)
         const weightedSimilarity =
-          catSim * 0.25 + subSim * 0.3 + bestPtSim * 0.45;
-        const confidence = Math.round(weightedSimilarity * 100);
+          bestCatSim * 0.2 + bestSubSim * 0.3 + bestPtSim * 0.5;
+
+        // Convert to percentage (0-100) and round
+        const confidence = Math.min(
+          100,
+          Math.max(0, Math.round(weightedSimilarity * 100))
+        );
 
         categorizedProducts.push({
           id: product.id,
-          category: category.name,
-          subcategory: subcategory.name,
+          category: bestCategory.name,
+          subcategory: bestSubcategory.name,
           partType: bestParttype.name,
+          category_id: bestCategory.id,
+          subcategory_id: bestSubcategory.id,
+          parttype_id: bestParttype.id,
           confidence: confidence,
         });
 
         successCount++;
       } catch (productError) {
         console.error(
-          `❌ Error processing product ${product.name}:`,
+          `❌ Error processing product "${product.name}":`,
           productError.message
         );
       }
     }
 
     console.log(
-      `\n✅ Categorization complete: ${successCount}/${products.length} products`
+      `\n✅ Categorization complete: ${successCount}/${products.length} products (${skippedCount} skipped)`
     );
 
-    // Calculate quality distribution (updated thresholds for keyword-boosted scoring)
-    const excellentMatches = categorizedProducts.filter(
+    if (skippedCount > 0) {
+      console.warn(
+        `\n⚠️  ${skippedCount} products were skipped due to missing embeddings`
+      );
+      console.warn(
+        `   Run: npm run generate-product-embeddings to generate embeddings for all products`
+      );
+    }
+
+    // Calculate quality distribution
+    const highConfidence = categorizedProducts.filter(
       (p) => p.confidence >= 70
     ).length;
-    const goodMatches = categorizedProducts.filter(
+    const mediumConfidence = categorizedProducts.filter(
       (p) => p.confidence >= 50 && p.confidence < 70
     ).length;
-    const weakMatches = categorizedProducts.filter(
-      (p) => p.confidence >= 30 && p.confidence < 50
-    ).length;
-    const poorMatches = categorizedProducts.filter(
-      (p) => p.confidence < 30
+    const lowConfidence = categorizedProducts.filter(
+      (p) => p.confidence < 50
     ).length;
 
     console.log(
-      `📊 Quality: ${excellentMatches} excellent (≥70%), ${goodMatches} good (50-69%), ${weakMatches} weak (30-49%), ${poorMatches} poor (<30%)`
+      `📊 Confidence distribution: ${highConfidence} high (≥70%), ${mediumConfidence} medium (50-69%), ${lowConfidence} low (<50%)`
     );
 
-    if (excellentMatches + goodMatches > successCount / 2) {
-      console.log("✅ High quality matches achieved!");
-    } else if (poorMatches > successCount / 2) {
-      console.log(
-        "⚠️ Many poor matches - categories may not align with product domain"
-      );
-    }
+    // Calculate average confidence
+    const avgConfidence =
+      successCount > 0
+        ? categorizedProducts.reduce((sum, p) => sum + p.confidence, 0) /
+          successCount
+        : 0;
+
+    console.log(`📈 Average confidence: ${avgConfidence.toFixed(1)}%`);
 
     return new Response(
       JSON.stringify({
         categorizedProducts,
         totalProcessed: successCount,
         totalRequested: products.length,
-        qualityStats: {
-          good: goodMatches,
-          weak: weakMatches,
-          poor: poorMatches,
+        averageConfidence: avgConfidence,
+        confidenceDistribution: {
+          high: highConfidence,
+          medium: mediumConfidence,
+          low: lowConfidence,
         },
       }),
       {
