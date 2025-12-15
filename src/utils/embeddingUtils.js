@@ -1,8 +1,11 @@
 // src/utils/embeddingUtils.js
-// Custom NLP embedding implementation without external dependencies
+// Professional vector embedding service for category and product matching
 
 /**
  * Simple hash function for consistent feature mapping
+ * @param {string} str - String to hash
+ * @param {number} seed - Seed value for hashing
+ * @returns {number} Hash value
  */
 const hashString = (str, seed = 0) => {
   let hash = seed;
@@ -23,15 +26,20 @@ const tokenize = (text) => {
   // Convert to lowercase and remove special characters
   const cleaned = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
 
-  // Split into words
-  const words = cleaned.split(/\s+/).filter((w) => w.length > 0);
+  // Split into words (skip very short words)
+  const words = cleaned.split(/\s+/).filter((w) => w.length > 2);
 
-  // Generate unigrams and bigrams
+  // Generate unigrams, bigrams, and trigrams
   const tokens = [...words];
 
   // Add bigrams
   for (let i = 0; i < words.length - 1; i++) {
     tokens.push(`${words[i]}_${words[i + 1]}`);
+  }
+
+  // Add trigrams for better matching
+  for (let i = 0; i < words.length - 2; i++) {
+    tokens.push(`${words[i]}_${words[i + 1]}_${words[i + 2]}`);
   }
 
   return tokens;
@@ -41,19 +49,32 @@ const tokenize = (text) => {
  * Generate a 768-dimensional embedding vector using hash-based TF-IDF
  * @param {string} text - Input text to embed
  * @param {number} dimension - Vector dimension (default 768 for compatibility)
+ * @param {boolean} verbose - Enable detailed logging
  * @returns {number[]} embedding vector
  */
-export const generateEmbedding = (text, dimension = 768) => {
+export const generateEmbedding = (text, dimension = 768, verbose = false) => {
   if (!text || typeof text !== "string") {
+    if (verbose) console.log("⚠️  Empty text provided, returning zero vector");
     return new Array(dimension).fill(0);
   }
+
+  if (verbose)
+    console.log(
+      `\n🔤 Generating embedding for: "${text.substring(0, 100)}${
+        text.length > 100 ? "..." : ""
+      }"`
+    );
 
   const tokens = tokenize(text);
   const embedding = new Array(dimension).fill(0);
 
   if (tokens.length === 0) {
+    if (verbose) console.log("⚠️  No tokens extracted, returning zero vector");
     return embedding;
   }
+
+  if (verbose)
+    console.log(`📊 Extracted ${tokens.length} tokens (unigrams + bigrams)`);
 
   // Count token frequencies
   const tokenCounts = {};
@@ -61,16 +82,25 @@ export const generateEmbedding = (text, dimension = 768) => {
     tokenCounts[token] = (tokenCounts[token] || 0) + 1;
   });
 
+  if (verbose) {
+    const topTokens = Object.entries(tokenCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([token, count]) => `${token}(${count})`)
+      .join(", ");
+    console.log(`🔝 Top tokens: ${topTokens}`);
+  }
+
   // Calculate TF-IDF-like scores and map to vector positions
   Object.entries(tokenCounts).forEach(([token, count]) => {
     // TF (term frequency): normalized by total tokens
     const tf = count / tokens.length;
 
-    // Use hash to determine multiple positions in the vector
-    for (let i = 0; i < 3; i++) {
+    // Use hash to determine multiple positions in the vector (more positions for better distribution)
+    for (let i = 0; i < 5; i++) {
       const position = hashString(token, i) % dimension;
-      // Add weighted contribution
-      embedding[position] += tf * (1 - i * 0.2); // Decay for additional positions
+      // Add weighted contribution with gentler decay
+      embedding[position] += tf * (1 - i * 0.15);
     }
   });
 
@@ -85,21 +115,43 @@ export const generateEmbedding = (text, dimension = 768) => {
     }
   }
 
+  if (verbose) {
+    const nonZeroCount = embedding.filter((v) => v !== 0).length;
+    console.log(
+      `✅ Generated ${dimension}D vector with ${nonZeroCount} non-zero values (magnitude: ${magnitude.toFixed(
+        4
+      )})`
+    );
+  }
+
   return embedding;
 };
 
 /**
- * Generate embedding for category + subcategory + partType
+ * Generate embedding for category + subcategory + partType with logging
  * @param {string} category
  * @param {string} subcategory
  * @param {string} partType
+ * @param {boolean} verbose - Enable detailed logging
  * @returns {number[]} 768-dimensional embedding vector
  */
-export const generateCategoryEmbedding = (category, subcategory, partType) => {
-  const combinedText = [category || "", subcategory || "", partType || ""]
-    .filter(Boolean)
-    .join(" ");
-  return generateEmbedding(combinedText, 768);
+export const generateCategoryEmbedding = (
+  category,
+  subcategory,
+  partType,
+  verbose = false
+) => {
+  const parts = [category || "", subcategory || "", partType || ""].filter(
+    Boolean
+  );
+  const combinedText = parts.join(" ");
+
+  if (verbose) {
+    const hierarchy = parts.join(" > ");
+    console.log(`\n📁 Category: ${hierarchy}`);
+  }
+
+  return generateEmbedding(combinedText, 768, verbose);
 };
 
 /**
