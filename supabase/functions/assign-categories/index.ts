@@ -81,7 +81,7 @@ serve(async (req) => {
           .select("id, name, category_id, embedding"),
         supabaseClient
           .from("parttypes")
-          .select("id, name, category_id, subcategory_id, embedding"),
+          .select("id, name,  subcategory_id, embedding"),
       ]);
 
     if (categoriesResult.error) {
@@ -220,11 +220,15 @@ serve(async (req) => {
     const subcategoriesByCategory = new Map<string, typeof allSubcategories>();
     const parttypesBySubcategory = new Map<string, typeof allParttypes>();
 
+    // ✅ Map subcategory_id → category_id (parttypes only have subcategory_id)
+    const subcategoryToCategoryMap = new Map<string, string>();
+
     allSubcategories.forEach((sub) => {
       if (!subcategoriesByCategory.has(sub.category_id)) {
         subcategoriesByCategory.set(sub.category_id, []);
       }
       subcategoriesByCategory.get(sub.category_id)!.push(sub);
+      subcategoryToCategoryMap.set(sub.id, sub.category_id);
     });
 
     allParttypes.forEach((pt) => {
@@ -407,11 +411,12 @@ serve(async (req) => {
         );
 
         for (const pt of allParttypes) {
+          const ptCategoryId = subcategoryToCategoryMap.get(pt.subcategory_id);
           if (
             pt.embedding &&
             Array.isArray(pt.embedding) &&
             pt.embedding.length === 384 &&
-            pt.category_id === bestCategory.id &&
+            ptCategoryId === bestCategory.id &&
             pt.subcategory_id === bestSubcategory.id
           ) {
             const similarity = cosineSimilarity(productEmbedding, pt.embedding);
@@ -435,11 +440,14 @@ serve(async (req) => {
           console.log(`   🔄 Searching other subcategories in category...`);
 
           for (const pt of allParttypes) {
+            const ptCategoryId = subcategoryToCategoryMap.get(
+              pt.subcategory_id
+            );
             if (
               pt.embedding &&
               Array.isArray(pt.embedding) &&
               pt.embedding.length === 384 &&
-              pt.category_id === bestCategory.id &&
+              ptCategoryId === bestCategory.id &&
               pt.subcategory_id !== bestSubcategory.id
             ) {
               const similarity = cosineSimilarity(
@@ -493,8 +501,11 @@ serve(async (req) => {
 
         // ✅ CRITICAL FIX: Update category and subcategory based on part type's hierarchy
         // This ensures the entire taxonomy chain is consistent with the part type
-        if (bestParttype.category_id && bestParttype.subcategory_id) {
-          const parttypeCategory = categoryMap.get(bestParttype.category_id);
+        const parttypeCategoryId = subcategoryToCategoryMap.get(
+          bestParttype.subcategory_id
+        );
+        if (parttypeCategoryId && bestParttype.subcategory_id) {
+          const parttypeCategory = categoryMap.get(parttypeCategoryId);
           const parttypeSubcategory = subcategoryMap.get(
             bestParttype.subcategory_id
           );
@@ -507,7 +518,7 @@ serve(async (req) => {
             );
           } else {
             console.warn(
-              `   ⚠️  Part type "${bestParttype.name}" has invalid category_id or subcategory_id`
+              `   ⚠️  Part type "${bestParttype.name}" has invalid subcategory_id`
             );
           }
         }

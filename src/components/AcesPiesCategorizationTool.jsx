@@ -855,14 +855,54 @@ const AcesPiesCategorizationTool = () => {
     console.log("\n🔄 Preparing products for vector categorization...");
     console.log(`📦 Total products: ${totalProducts}`);
 
-    const productsToSend = products.map((p, index) => ({
-      id: p.id || `product-${index}`,
-      name: p.name || p.productName || "",
-      description: p.description || "",
-    }));
-
     setIsProcessing(true);
     setCategorizationMethod("vector");
+
+    // Generate embeddings for products first
+    const loadingToast = toast.loading(
+      `🔧 Generating embeddings for ${totalProducts} products...`
+    );
+
+    let productsToSend;
+    try {
+      // Dynamically import the embedding generator
+      const { generateProductEmbeddings } = await import(
+        "../utils/embeddingGenerator"
+      );
+
+      const productsForEmbedding = products.map((p, index) => ({
+        id: p.id || `product-${index}`,
+        name: p.name || p.productName || "",
+        description: p.description || "",
+      }));
+
+      // Generate embeddings with progress updates
+      productsToSend = await generateProductEmbeddings(
+        productsForEmbedding,
+        (current, total) => {
+          if (current % 5 === 0 || current === total) {
+            toast.loading(`🔧 Generating embeddings: ${current}/${total}`, {
+              id: loadingToast,
+            });
+          }
+        }
+      );
+
+      if (productsToSend.length === 0) {
+        throw new Error("Failed to generate embeddings for products");
+      }
+
+      console.log(
+        `✅ Generated embeddings for ${productsToSend.length}/${totalProducts} products`
+      );
+    } catch (embeddingError) {
+      console.error("❌ Embedding generation failed:", embeddingError);
+      toast.error(`Failed to generate embeddings: ${embeddingError.message}`, {
+        id: loadingToast,
+      });
+      setIsProcessing(false);
+      return;
+    }
 
     // Check if batching is needed
     const needsBatching = totalProducts > BATCH_SIZE;
@@ -874,10 +914,11 @@ const AcesPiesCategorizationTool = () => {
       );
     }
 
-    const loadingToast = toast.loading(
+    toast.loading(
       needsBatching
         ? `🚀 Categorizing ${totalProducts} products in ${totalBatches} batches...`
-        : `🚀 Categorizing ${totalProducts} products using vector similarity...`
+        : `🚀 Categorizing ${totalProducts} products using vector similarity...`,
+      { id: loadingToast }
     );
 
     try {
