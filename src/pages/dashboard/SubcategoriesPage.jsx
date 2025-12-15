@@ -13,6 +13,8 @@ import { supabase } from "../../config/supabase";
 import { generateCategoryEmbedding } from "../../utils/embeddingUtils";
 import toast from "react-hot-toast";
 
+const BATCH_SIZE = 20;
+
 const SubcategoriesPage = () => {
   const [subcategories, setSubcategories] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -28,17 +30,29 @@ const SubcategoriesPage = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteItem, setDeleteItem] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalCount, setTotalCount] = useState(0);
   const observerTarget = React.useRef(null);
 
   useEffect(() => {
-    loadData();
+    loadInitialData();
   }, []);
 
-  const loadData = async () => {
+  const loadInitialData = async () => {
     setLoading(true);
     try {
+      // Get total count only
+      const countRes = await supabase
+        .from("subcategories")
+        .select("*", { count: "exact", head: true });
+      setTotalCount(countRes.count || 0);
+
       const [subsRes, catsRes] = await Promise.all([
-        supabase.from("subcategories").select("*").order("name"),
+        supabase
+          .from("subcategories")
+          .select("*")
+          .order("name")
+          .range(0, BATCH_SIZE - 1),
         supabase.from("categories").select("*").order("name"),
       ]);
 
@@ -46,6 +60,8 @@ const SubcategoriesPage = () => {
       if (catsRes.error) throw catsRes.error;
 
       setSubcategories(subsRes.data || []);
+      setHasMore((subsRes.data?.length || 0) === BATCH_SIZE);
+      setDisplayCount(subsRes.data?.length || 0);
       setCategories(catsRes.data || []);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -53,6 +69,35 @@ const SubcategoriesPage = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchMoreSubcategories = async () => {
+    setLoadingMore(true);
+    try {
+      const from = subcategories.length;
+      const to = from + BATCH_SIZE - 1;
+      const { data, error } = await supabase
+        .from("subcategories")
+        .select("*")
+        .order("name")
+        .range(from, to);
+
+      if (error) throw error;
+
+      setSubcategories((prev) => [...prev, ...(data || [])]);
+      setHasMore((data?.length || 0) === BATCH_SIZE);
+      setDisplayCount((prev) => prev + (data?.length || 0));
+    } catch (error) {
+      toast.error("Failed to load more subcategories");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // When adding, editing, or deleting, reload all data from scratch
+  const reloadAllData = async () => {
+    setDisplayCount(BATCH_SIZE);
+    await loadInitialData();
   };
 
   const handleAdd = async () => {
@@ -83,7 +128,7 @@ const SubcategoriesPage = () => {
       toast.success("Subcategory added successfully!", { id: loadingToast });
       setShowAddModal(false);
       setFormData({ name: "", categoryId: "" });
-      loadData();
+      reloadAllData();
     } catch (error) {
       console.error("Error adding subcategory:", error);
       toast.error(`Failed to add: ${error.message}`, { id: loadingToast });
@@ -122,7 +167,7 @@ const SubcategoriesPage = () => {
 
       toast.success("Subcategory updated successfully!", { id: loadingToast });
       setShowEditModal(false);
-      loadData();
+      reloadAllData();
     } catch (error) {
       console.error("Error updating subcategory:", error);
       toast.error(`Failed to update: ${error.message}`, { id: loadingToast });
@@ -148,7 +193,7 @@ const SubcategoriesPage = () => {
       toast.success("Subcategory deleted successfully!", { id: loadingToast });
       setShowDeleteModal(false);
       setDeleteItem(null);
-      loadData();
+      reloadAllData();
     } catch (error) {
       console.error("Error deleting:", error);
       toast.error(`Failed to delete: ${error.message}`, { id: loadingToast });
@@ -161,6 +206,7 @@ const SubcategoriesPage = () => {
     return categories.find((c) => c.id === categoryId)?.name || "Unknown";
   };
 
+  // Filtering is now done on the loaded subcategories only
   const filteredSubcategories = subcategories.filter(
     (sub) =>
       sub.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -169,20 +215,21 @@ const SubcategoriesPage = () => {
         .includes(searchTerm.toLowerCase())
   );
 
-  const displayedSubcategories = filteredSubcategories.slice(0, displayCount);
+  // No slicing, since we fetch in batches
+  const displayedSubcategories = filteredSubcategories;
 
   useEffect(() => {
+    if (!hasMore || loadingMore || loading) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (
           entries[0].isIntersecting &&
-          displayCount < filteredSubcategories.length
+          hasMore &&
+          !loadingMore &&
+          !loading &&
+          searchTerm === "" // Only fetch more if not searching
         ) {
-          setLoadingMore(true);
-          setTimeout(() => {
-            setDisplayCount((prev) => prev + 20);
-            setLoadingMore(false);
-          }, 500);
+          fetchMoreSubcategories();
         }
       },
       { threshold: 1.0 }
@@ -197,7 +244,8 @@ const SubcategoriesPage = () => {
         observer.unobserve(observerTarget.current);
       }
     };
-  }, [displayCount, filteredSubcategories.length]);
+    // eslint-disable-next-line
+  }, [subcategories, hasMore, loadingMore, loading, searchTerm]);
 
   const SkeletonCard = () => (
     <div className="p-4 animate-pulse flex items-center justify-between">
@@ -258,7 +306,7 @@ const SubcategoriesPage = () => {
                 placeholder="Search subcategories..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
               />
             </div>
           </div>
@@ -343,7 +391,7 @@ const SubcategoriesPage = () => {
                   </div>
                 </div>
               ))}
-              {displayCount < filteredSubcategories.length && (
+              {hasMore && !searchTerm && (
                 <div ref={observerTarget} className="p-4">
                   {loadingMore && (
                     <div className="flex justify-center">
@@ -359,12 +407,11 @@ const SubcategoriesPage = () => {
         {/* Pagination Footer */}
         {!loading && filteredSubcategories.length > 0 && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            Showing {Math.min(displayCount, filteredSubcategories.length)} of{" "}
-            {filteredSubcategories.length}{" "}
-            {filteredSubcategories.length === 1
-              ? "subcategory"
-              : "subcategories"}
-            {searchTerm && ` (filtered from ${subcategories.length} total)`}
+            Showing {filteredSubcategories.length} of {subcategories.length} loaded
+            {totalCount > 0 && (
+              <> (out of {totalCount} total subcategor{totalCount === 1 ? "y" : "ies"})</>
+            )}
+            {searchTerm && ` (filtered)`}
           </div>
         )}
       </div>
@@ -383,7 +430,7 @@ const SubcategoriesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                 placeholder="Enter subcategories name"
                 autoFocus
               />
@@ -397,7 +444,7 @@ const SubcategoriesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, categoryId: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
               >
                 <option value="">Select categories</option>
                 {categories.map((cat) => (
@@ -454,7 +501,7 @@ const SubcategoriesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                 placeholder="Enter subcategory name"
                 autoFocus
               />
@@ -468,7 +515,7 @@ const SubcategoriesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, categoryId: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
               >
                 {categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>

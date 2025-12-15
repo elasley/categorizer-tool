@@ -13,6 +13,8 @@ import { supabase } from "../../config/supabase";
 import { generateCategoryEmbedding } from "../../utils/embeddingUtils";
 import toast from "react-hot-toast";
 
+const BATCH_SIZE = 20;
+
 const ParttypesPage = () => {
   const [parttypes, setParttypes] = useState([]);
   const [subcategories, setSubcategories] = useState([]);
@@ -29,17 +31,29 @@ const ParttypesPage = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteItem, setDeleteItem] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalCount, setTotalCount] = useState(0);
   const observerTarget = React.useRef(null);
 
   useEffect(() => {
-    loadData();
+    loadInitialData();
   }, []);
 
-  const loadData = async () => {
+  const loadInitialData = async () => {
     setLoading(true);
     try {
+      // Fetch total count only
+      const countRes = await supabase
+        .from("parttypes")
+        .select("*", { count: "exact", head: true });
+      setTotalCount(countRes.count || 0);
+
       const [ptsRes, subsRes, catsRes] = await Promise.all([
-        supabase.from("parttypes").select("*").order("name"),
+        supabase
+          .from("parttypes")
+          .select("*")
+          .order("name")
+          .range(0, BATCH_SIZE - 1),
         supabase.from("subcategories").select("*").order("name"),
         supabase.from("categories").select("*").order("name"),
       ]);
@@ -49,6 +63,8 @@ const ParttypesPage = () => {
       if (catsRes.error) throw catsRes.error;
 
       setParttypes(ptsRes.data || []);
+      setHasMore((ptsRes.data?.length || 0) === BATCH_SIZE);
+      setDisplayCount(ptsRes.data?.length || 0);
       setSubcategories(subsRes.data || []);
       setCategories(catsRes.data || []);
     } catch (error) {
@@ -56,6 +72,29 @@ const ParttypesPage = () => {
       toast.error("Failed to load part types");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchMoreParttypes = async () => {
+    setLoadingMore(true);
+    try {
+      const from = parttypes.length;
+      const to = from + BATCH_SIZE - 1;
+      const { data, error } = await supabase
+        .from("parttypes")
+        .select("*")
+        .order("name")
+        .range(from, to);
+
+      if (error) throw error;
+
+      setParttypes((prev) => [...prev, ...(data || [])]);
+      setHasMore((data?.length || 0) === BATCH_SIZE);
+      setDisplayCount((prev) => prev + (data?.length || 0));
+    } catch (error) {
+      toast.error("Failed to load more part types");
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -93,7 +132,7 @@ const ParttypesPage = () => {
       toast.success("Part type added successfully!", { id: loadingToast });
       setShowAddModal(false);
       setFormData({ name: "", subcategoryId: "" });
-      loadData();
+      reloadAllData();
     } catch (error) {
       console.error("Error adding part type:", error);
       toast.error(`Failed to add: ${error.message}`, { id: loadingToast });
@@ -138,7 +177,7 @@ const ParttypesPage = () => {
 
       toast.success("Part type updated successfully!", { id: loadingToast });
       setShowEditModal(false);
-      loadData();
+      reloadAllData();
     } catch (error) {
       console.error("Error updating part type:", error);
       toast.error(`Failed to update: ${error.message}`, { id: loadingToast });
@@ -164,13 +203,18 @@ const ParttypesPage = () => {
       toast.success("Part type deleted successfully!", { id: loadingToast });
       setShowDeleteModal(false);
       setDeleteItem(null);
-      loadData();
+      reloadAllData();
     } catch (error) {
       console.error("Error deleting:", error);
       toast.error(`Failed to delete: ${error.message}`, { id: loadingToast });
     } finally {
       setDeleting(false);
     }
+  };
+
+  const reloadAllData = async () => {
+    setDisplayCount(BATCH_SIZE);
+    await loadInitialData();
   };
 
   const getSubcategoryName = (subcategoryId) => {
@@ -196,20 +240,20 @@ const ParttypesPage = () => {
         .includes(searchTerm.toLowerCase())
   );
 
-  const displayedParttypes = filteredParttypes.slice(0, displayCount);
+  const displayedParttypes = filteredParttypes;
 
   useEffect(() => {
+    if (!hasMore || loadingMore || loading) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (
           entries[0].isIntersecting &&
-          displayCount < filteredParttypes.length
+          hasMore &&
+          !loadingMore &&
+          !loading &&
+          searchTerm === "" // Only fetch more if not searching
         ) {
-          setLoadingMore(true);
-          setTimeout(() => {
-            setDisplayCount((prev) => prev + 20);
-            setLoadingMore(false);
-          }, 500);
+          fetchMoreParttypes();
         }
       },
       { threshold: 1.0 }
@@ -224,7 +268,8 @@ const ParttypesPage = () => {
         observer.unobserve(observerTarget.current);
       }
     };
-  }, [displayCount, filteredParttypes.length]);
+    // eslint-disable-next-line
+  }, [parttypes, hasMore, loadingMore, loading, searchTerm]);
 
   const SkeletonCard = () => (
     <div className="p-4 animate-pulse flex items-center justify-between">
@@ -283,7 +328,7 @@ const ParttypesPage = () => {
                 placeholder="Search part types..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
               />
             </div>
           </div>
@@ -369,7 +414,7 @@ const ParttypesPage = () => {
                   </div>
                 </div>
               ))}
-              {displayCount < filteredParttypes.length && (
+              {hasMore && !searchTerm && (
                 <div ref={observerTarget} className="p-4">
                   {loadingMore && (
                     <div className="flex justify-center">
@@ -385,10 +430,11 @@ const ParttypesPage = () => {
         {/* Pagination Footer */}
         {!loading && filteredParttypes.length > 0 && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            Showing {Math.min(displayCount, filteredParttypes.length)} of{" "}
-            {filteredParttypes.length}{" "}
-            {filteredParttypes.length === 1 ? "part type" : "part types"}
-            {searchTerm && ` (filtered from ${parttypes.length} total)`}
+            Showing {filteredParttypes.length} of {parttypes.length} loaded
+            {totalCount > 0 && (
+              <> (out of {totalCount} total part type{totalCount > 1 ? "s" : ""})</>
+            )}
+            {searchTerm && ` (filtered)`}
           </div>
         )}
       </div>
@@ -410,7 +456,7 @@ const ParttypesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 placeholder="Enter part type categories name"
                 autoFocus
               />
@@ -424,11 +470,11 @@ const ParttypesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, subcategoryId: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
               >
                 <option value="">Select subcategories</option>
                 {subcategories.map((sub) => (
-                  <option key={sub.id} value={sub.id}>
+                  <option key={sub.id} value={sub.id} >
                     {categories.find((c) => c.id === sub.category_id)?.name}{" "}
                     {" > "}
                     {sub.name}
@@ -483,7 +529,7 @@ const ParttypesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 placeholder="Enter part type name"
                 autoFocus
               />
@@ -497,7 +543,7 @@ const ParttypesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, subcategoryId: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
               >
                 {subcategories.map((sub) => (
                   <option key={sub.id} value={sub.id}>
