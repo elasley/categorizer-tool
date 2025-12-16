@@ -96,13 +96,22 @@ export const signOut = createAsyncThunk(
 
 export const checkSession = createAsyncThunk(
   "auth/checkSession",
-  async (_, { rejectWithValue }) => {
+  async (_, { dispatch, rejectWithValue }) => {
     try {
       const {
         data: { session },
         error,
       } = await supabase.auth.getSession();
       if (error) throw error;
+      // Check JWT expiration
+      if (session && session.expires_at) {
+        const now = Math.floor(Date.now() / 1000);
+        if (session.expires_at < now) {
+          // Token expired, sign out
+          await dispatch(signOut());
+          return null;
+        }
+      }
       return session;
     } catch (error) {
       return rejectWithValue(error.message);

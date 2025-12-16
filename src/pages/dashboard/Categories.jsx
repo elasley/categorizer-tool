@@ -22,6 +22,8 @@ import LoadingSpinner from "../../components/LoadingSpinner";
 const Categories = () => {
   const { user } = useSelector((state) => state.auth);
   const [categories, setCategories] = useState([]);
+  const [categoriesPage, setCategoriesPage] = useState(0);
+  const [hasMoreCategories, setHasMoreCategories] = useState(true);
   const [subcategories, setSubcategories] = useState([]);
   const [parttypes, setParttypes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -142,45 +144,49 @@ const Categories = () => {
   };
 
   useEffect(() => {
-    loadAllData();
+    // Reset pagination and load first batch
+    setCategories([]);
+    setCategoriesPage(0);
+    setHasMoreCategories(true);
+    loadCategories(0, true);
+    loadSubcategoriesAndParttypes();
   }, []);
 
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && displayCount < categories.length) {
-          setLoadingMore(true);
-          setTimeout(() => {
-            setDisplayCount((prev) => prev + 20);
-            setLoadingMore(false);
-          }, 500);
-        }
-      },
-      { threshold: 1.0 }
-    );
-
-    if (observerTarget.current) {
-      observer.observe(observerTarget.current);
-    }
-
-    return () => {
-      if (observerTarget.current) {
-        observer.unobserve(observerTarget.current);
-      }
-    };
-  }, [displayCount, categories.length]);
-
-  const loadAllData = async () => {
+  const loadCategories = async (page = 0, reset = false) => {
     setLoading(true);
     try {
-      // Load categories
-      const { data: categoriesData, error: categoriesError } = await supabase
+      const from = page * 20;
+      const to = from + 19;
+      const { data, error, count } = await supabase
         .from("categories")
-        .select("*")
-        .order("name", { ascending: true });
+        .select("*", { count: "exact" })
+        .order("name", { ascending: true })
+        .range(from, to);
 
-      if (categoriesError) throw categoriesError;
+      if (error) throw error;
 
+      if (reset) {
+        setCategories(data || []);
+      } else {
+        setCategories((prev) => [...prev, ...(data || [])]);
+      }
+      setHasMoreCategories((data?.length || 0) === 20);
+      setCategoriesPage(page);
+      // Update stats for categories count
+      setStats((prev) => ({
+        ...prev,
+        categories: count ?? (reset ? (data?.length || 0) : prev.categories),
+      }));
+    } catch (error) {
+      toast.error("Failed to load categories");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSubcategoriesAndParttypes = async () => {
+    setLoading(true);
+    try {
       // Load subcategories with category info
       const { data: subcategoriesData, error: subcategoriesError } =
         await supabase
@@ -198,21 +204,28 @@ const Categories = () => {
 
       if (parttypesError) throw parttypesError;
 
-      setCategories(categoriesData || []);
       setSubcategories(subcategoriesData || []);
       setParttypes(parttypesData || []);
-
-      setStats({
-        categories: categoriesData?.length || 0,
+      setStats((prev) => ({
+        ...prev,
         subcategories: subcategoriesData?.length || 0,
         partTypes: parttypesData?.length || 0,
-      });
+      }));
     } catch (error) {
-      console.error("Error loading data:", error);
       toast.error("Failed to load data");
     } finally {
       setLoading(false);
     }
+  };
+
+  // Add this function before any usage of loadAllData
+  const loadAllData = async () => {
+    // Reset and reload all paginated data
+    setCategories([]);
+    setCategoriesPage(0);
+    setHasMoreCategories(true);
+    await loadCategories(0, true);
+    await loadSubcategoriesAndParttypes();
   };
 
   // Edit handlers
@@ -331,6 +344,32 @@ const Categories = () => {
     }
   };
 
+  useEffect(() => {
+    if (!observerTarget.current) return;
+
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        if (
+          entries[0].isIntersecting &&
+          hasMoreCategories &&
+          !loading &&
+          !loadingMore
+        ) {
+          setLoadingMore(true);
+          loadCategories(categoriesPage + 1).finally(() => setLoadingMore(false));
+        }
+      },
+      { threshold: 1.0 }
+    );
+
+    observer.observe(observerTarget.current);
+
+    return () => {
+      if (observerTarget.current) observer.unobserve(observerTarget.current);
+    };
+    // eslint-disable-next-line
+  }, [categories, hasMoreCategories, loading, loadingMore, categoriesPage]);
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
@@ -403,7 +442,7 @@ const Categories = () => {
 
         {/* Content */}
         <div className="p-6">
-          {loading ? (
+          {(loading && categories.length === 0) ? (
             <>
               <div className="flex items-center justify-between mb-4">
                 <div className="h-6 bg-gray-200 rounded w-32 animate-pulse"></div>
@@ -474,7 +513,7 @@ const Categories = () => {
                   <>
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
                       <div className="p-4 max-h-[600px] overflow-y-auto space-y-2">
-                        {categories.slice(0, displayCount).map((category) => {
+                        {categories.map((category) => {
                           const categorySubcategories = subcategories.filter(
                             (sub) => sub.category_id === category.id
                           );
@@ -810,10 +849,10 @@ const Categories = () => {
                           );
                         })}
                         {/* Infinite scroll trigger */}
-                        {displayCount < categories.length && (
-                          <div ref={observerTarget} className="p-4">
+                        {hasMoreCategories && (
+                          <div ref={observerTarget} className="p-0 m-0">
                             {loadingMore && (
-                              <div className="flex justify-center">
+                              <div className="flex justify-center bg-white py-4">
                                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                               </div>
                             )}

@@ -23,7 +23,7 @@ import ReportsPage from "./pages/dashboard/ReportsPage";
 import ProductsViewPage from "./pages/dashboard/ProductsViewPage";
 import PrivateRoute from "./components/PrivateRoute";
 import LoadingSpinner from "./components/LoadingSpinner";
-
+import { SplineIcon } from "lucide-react";
 // Import existing categorization tool
 import AcesPiesCategorizationTool from "./components/AcesPiesCategorizationTool";
 
@@ -58,7 +58,7 @@ function App() {
         }}
       />
       <PersistGate
-        loading={<LoadingSpinner fullScreen text="Loading..." />}
+        loading={<LoadingSpinner fullScreen icon={<SplineIcon />} />}
         persistor={persistor}
       >
         <BrowserRouter>

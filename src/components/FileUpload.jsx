@@ -365,33 +365,34 @@ const FileUpload = ({
                   className="hidden"
                 />
 
-                <div className="inline-flex items-center justify-center space-x-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUploadType("products");
-                      if (fileInputRef.current) fileInputRef.current.click();
-                    }}
-                    className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-                    disabled={isProcessing}
-                  >
-                    <Upload className="w-4 h-4 mr-2" />
-                    Upload Products
-                  </button>
+               <div className="inline-flex flex-col sm:flex-row items-center justify-center space-y-3 sm:space-y-0 sm:space-x-3">
+  <button
+    type="button"
+    onClick={() => {
+      setUploadType("products");
+      if (fileInputRef.current) fileInputRef.current.click();
+    }}
+    className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+    disabled={isProcessing}
+  >
+    <Upload className="w-4 h-4 mr-2" />
+    Upload Products
+  </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUploadType("categories");
-                      if (fileInputRef.current) fileInputRef.current.click();
-                    }}
-                    className="inline-flex items-center px-4 py-3 border border-gray-300 bg-white text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
-                    disabled={isProcessing}
-                  >
-                    <Upload className="w-4 h-4 mr-2" />
-                    Upload Categories
-                  </button>
-                </div>
+  <button
+    type="button"
+    onClick={() => {
+      setUploadType("categories");
+      if (fileInputRef.current) fileInputRef.current.click();
+    }}
+    className="inline-flex items-center px-4 py-3 border border-gray-300 bg-white text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+    disabled={isProcessing}
+  >
+    <Upload className="w-4 h-4 mr-2" />
+    Upload Categories
+  </button>
+</div>
+
 
                 <div className="text-sm text-gray-500">
                   or drag and drop your file here
