@@ -20,10 +20,13 @@ const DashboardHome = () => {
   const [categorizedCount, setCategorizedCount] = useState(0);
   const [uploadFilesCount, setUploadFilesCount] = useState(0);
   const [recentUploads, setRecentUploads] = useState([]);
+  const [loadingStats, setLoadingStats] = useState(true);
+  const [loadingActivity, setLoadingActivity] = useState(true);
 
   useEffect(() => {
     // Fetch total categorized products
     const fetchCounts = async () => {
+      setLoadingStats(true);
       const { count: categorized, error: catErr } = await supabase
         .from("categories")
         .select("*", { count: "exact", head: true });
@@ -34,6 +37,7 @@ const DashboardHome = () => {
         .from("upload_history")
         .select("*", { count: "exact", head: true });
       if (!upErr) setUploadFilesCount(uploads || 0);
+      setLoadingStats(false);
     };
     fetchCounts();
   }, []);
@@ -41,12 +45,14 @@ const DashboardHome = () => {
   useEffect(() => {
     // Fetch latest 4 uploads for recent activity
     const fetchRecentUploads = async () => {
+      setLoadingActivity(true);
       const { data, error } = await supabase
         .from("upload_history")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(4);
       if (!error) setRecentUploads(data || []);
+      setLoadingActivity(false);
     };
     fetchRecentUploads();
   }, []);
@@ -106,25 +112,41 @@ const DashboardHome = () => {
     <div className="space-y-6">
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 sm:gap-6">
-        {stats.map((stat, idx) => (
-          <div
-            key={idx}
-            className="bg-white rounded-xl shadow-md border border-gray-200 p-6 hover:shadow-lg transition-all duration-200"
-          >
-            <div className="flex items-start justify-between mb-4">
+        {loadingStats ? (
+          <>
+            {[1, 2].map((idx) => (
               <div
-                className={`w-12 h-12 rounded-lg bg-${stat.color}-100 flex items-center justify-center`}
+                key={idx}
+                className="bg-white rounded-xl shadow-md border border-gray-200 p-6 animate-pulse"
               >
-                <stat.icon className={`w-6 h-6 text-${stat.color}-600`} />
+                <div className="flex items-start justify-between mb-4">
+                  <div className="w-12 h-12 rounded-lg bg-gray-200"></div>
+                </div>
+                <div className="h-8 bg-gray-200 rounded w-24 mb-2"></div>
+                <div className="h-4 bg-gray-200 rounded w-32"></div>
               </div>
-              {/* Remove change/trend if not needed */}
+            ))}
+          </>
+        ) : (
+          stats.map((stat, idx) => (
+            <div
+              key={idx}
+              className="bg-white rounded-xl shadow-md border border-gray-200 p-6 hover:shadow-lg transition-all duration-200"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div
+                  className={`w-12 h-12 rounded-lg bg-${stat.color}-100 flex items-center justify-center`}
+                >
+                  <stat.icon className={`w-6 h-6 text-${stat.color}-600`} />
+                </div>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-1">
+                {stat.value}
+              </h3>
+              <p className="text-sm text-gray-600">{stat.title}</p>
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-1">
-              {stat.value}
-            </h3>
-            <p className="text-sm text-gray-600">{stat.title}</p>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       {/* Two Column Layout */}
@@ -141,8 +163,25 @@ const DashboardHome = () => {
             </button>
           </div>
           <div className="space-y-4">
-            {recentUploads.length === 0 ? (
-              <div className="text-gray-500 text-center">No uploads yet.</div>
+            {loadingActivity ? (
+              <>
+                {[1, 2, 3, 4].map((idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg animate-pulse"
+                  >
+                    <div className="w-10 h-10 bg-gray-200 rounded-full flex-shrink-0"></div>
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : recentUploads.length === 0 ? (
+              <div className="text-gray-500 text-center py-8">
+                No uploads yet.
+              </div>
             ) : (
               recentUploads.map((upload) => (
                 <div
@@ -171,34 +210,33 @@ const DashboardHome = () => {
           <h2 className="text-xl font-bold text-gray-900 mb-6">
             Quick Actions
           </h2>
-         <div className="space-y-3">
-  <button
-    className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
+          <div className="space-y-3">
+            <button
+              className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
                hover:bg-blue-600 group"
-    onClick={() => navigate("/dashboard/categorize")}
-  >
-    <div className="flex items-center gap-3">
-      <Package className="w-5 h-5 text-gray-600 group-hover:text-white" />
-      <span className="font-semibold text-sm text-gray-700 group-hover:text-white">
-        Upload Products
-      </span>
-    </div>
-  </button>
+              onClick={() => navigate("/dashboard/categorize")}
+            >
+              <div className="flex items-center gap-3">
+                <Package className="w-5 h-5 text-gray-600 group-hover:text-white" />
+                <span className="font-semibold text-sm text-gray-700 group-hover:text-white">
+                  Upload Products
+                </span>
+              </div>
+            </button>
 
-  <button
-    className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
+            <button
+              className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
                hover:bg-blue-600 group border border-gray-200"
-    onClick={() => navigate("/dashboard/reports")}
-  >
-    <div className="flex items-center gap-3">
-      <TrendingUp className="w-5 h-5 text-gray-600 group-hover:text-white" />
-      <span className="font-semibold text-sm text-gray-700 group-hover:text-white">
-        View Reports
-      </span>
-    </div>
-  </button>
-</div>
-
+              onClick={() => navigate("/dashboard/reports")}
+            >
+              <div className="flex items-center gap-3">
+                <TrendingUp className="w-5 h-5 text-gray-600 group-hover:text-white" />
+                <span className="font-semibold text-sm text-gray-700 group-hover:text-white">
+                  View Reports
+                </span>
+              </div>
+            </button>
+          </div>
         </div>
       </div>
     </div>

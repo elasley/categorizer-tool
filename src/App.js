@@ -83,7 +83,7 @@ function App() {
                 path="categorize"
                 element={<AcesPiesCategorizationTool />}
               />
-              <Route
+              {/* <Route
                 path="products"
                 element={
                   <div className="bg-white rounded-xl shadow-md border border-gray-200 p-8">
@@ -95,13 +95,13 @@ function App() {
                     </p>
                   </div>
                 }
-              />
+              /> */}
               <Route path="reports" element={<ReportsPage />} />
               <Route
                 path="products-view/:fileUrl"
                 element={<ProductsViewPage />}
               />
-              <Route
+              {/* <Route
                 path="insights"
                 element={
                   <div className="bg-white rounded-xl shadow-md border border-gray-200 p-8">
@@ -113,7 +113,7 @@ function App() {
                     </p>
                   </div>
                 }
-              />
+              /> */}
               <Route path="categories" element={<Categories />} />
               <Route path="categories-list" element={<CategoriesPage />} />
               <Route path="subcategories" element={<SubcategoriesPage />} />
@@ -132,18 +132,7 @@ function App() {
                 }
               />
               <Route path="settings" element={<Settings />} />
-              <Route path="profile" element={<Profile />} />
-              <Route
-                path="help"
-                element={
-                  <div className="bg-white rounded-xl shadow-md border border-gray-200 p-8">
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      Help & Support
-                    </h2>
-                    <p className="text-gray-600 mt-2">Get help and support</p>
-                  </div>
-                }
-              />
+              <Route path="profile" element={<Profile />} />/
             </Route>
 
             {/* Catch all */}

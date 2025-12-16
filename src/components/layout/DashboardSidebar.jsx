@@ -35,7 +35,7 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
       title: "Analytics",
       items: [
         { icon: BarChart3, label: "Reports", path: "/dashboard/reports" },
-        { icon: Zap, label: "AI Insights", path: "/dashboard/insights" },
+        // { icon: Zap, label: "AI Insights", path: "/dashboard/insights" },
       ],
     },
     {
@@ -53,14 +53,14 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
           path: "/dashboard/subcategories",
         },
         { icon: Box, label: "Part Types", path: "/dashboard/parttypes" },
-        { icon: FolderOpen, label: "Products", path: "/dashboard/products" },
+        // { icon: FolderOpen, label: "Products", path: "/dashboard/products" },
       ],
     },
     {
       title: "Settings",
       items: [
         { icon: Settings, label: "Settings", path: "/dashboard/settings" },
-        { icon: HelpCircle, label: "Help & Support", path: "/dashboard/help" },
+        // { icon: HelpCircle, label: "Help & Support", path: "/dashboard/help" },
       ],
     },
   ];

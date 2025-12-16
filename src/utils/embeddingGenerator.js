@@ -36,7 +36,7 @@ export const generateEmbedding = async (text) => {
 };
 
 /**
- * Generate embeddings for multiple products
+ * Generate embeddings for multiple products (FAST batch processing)
  * @param {Array} products - Array of products with name and description
  * @param {Function} progressCallback - Optional callback for progress updates
  * @returns {Promise<Array>} - Products with embeddings added
@@ -45,43 +45,76 @@ export const generateProductEmbeddings = async (
   products,
   progressCallback = null
 ) => {
-  console.log(`\n🔧 Generating embeddings for ${products.length} products...`);
+  console.log(
+    `\n🔧 Generating embeddings for ${products.length} products using BATCH processing...`
+  );
 
   const pipe = await getEmbeddingPipeline();
+  const BATCH_SIZE = 64; // Process 64 products at once (optimal for browser memory)
   const productsWithEmbeddings = [];
 
-  for (let i = 0; i < products.length; i++) {
-    const product = products[i];
-    const text = `${product.name || ""} ${product.description || ""}`.trim();
+  // Prepare texts array
+  const validProducts = [];
+  const texts = [];
 
-    if (!text) {
-      console.warn(`⚠️ Skipping product ${i + 1}: empty name and description`);
-      continue;
+  for (const product of products) {
+    const text = `${product.name || ""} ${product.description || ""}`.trim();
+    if (text) {
+      validProducts.push(product);
+      texts.push(text);
     }
+  }
+
+  console.log(
+    `   Processing ${validProducts.length} valid products in batches of ${BATCH_SIZE}...`
+  );
+
+  // Process in batches
+  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+    const batchEnd = Math.min(i + BATCH_SIZE, texts.length);
+    const batchTexts = texts.slice(i, batchEnd);
 
     try {
-      const output = await pipe(text, {
+      // Process entire batch at once
+      const outputs = await pipe(batchTexts, {
         pooling: "mean",
         normalize: true,
       });
 
-      productsWithEmbeddings.push({
-        ...product,
-        embedding: Array.from(output.data),
-      });
+      // Add embeddings to products
+      for (let j = 0; j < batchTexts.length; j++) {
+        const productIndex = i + j;
+        productsWithEmbeddings.push({
+          ...validProducts[productIndex],
+          embedding: Array.from(outputs[j].data),
+        });
+      }
 
       if (progressCallback) {
-        progressCallback(i + 1, products.length);
+        progressCallback(batchEnd, texts.length);
       }
 
-      if ((i + 1) % 10 === 0) {
-        console.log(`   Generated ${i + 1}/${products.length} embeddings`);
-      }
-    } catch (error) {
-      console.error(
-        `❌ Failed to generate embedding for product ${i + 1}:`,
-        error
+      console.log(
+        `   Batch progress: ${batchEnd}/${texts.length} embeddings generated`
       );
+    } catch (error) {
+      console.error(`❌ Failed to generate batch ${i}-${batchEnd}:`, error);
+
+      // Fallback: process one by one for this batch
+      for (let j = 0; j < batchTexts.length; j++) {
+        try {
+          const output = await pipe(batchTexts[j], {
+            pooling: "mean",
+            normalize: true,
+          });
+          productsWithEmbeddings.push({
+            ...validProducts[i + j],
+            embedding: Array.from(output.data),
+          });
+        } catch (e) {
+          console.error(`❌ Failed product ${i + j + 1}:`, e);
+        }
+      }
     }
   }
 

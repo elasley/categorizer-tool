@@ -353,7 +353,7 @@ const Categories = () => {
 
         {/* Stats Cards */}
         <div className="p-6 border-b border-gray-200">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-3 grid-cols-1 gap-4">
             {loading ? (
               // Skeleton loaders for stats
               <>
@@ -437,8 +437,8 @@ const Categories = () => {
             <>
               {/* Categories Tree View with Toggle */}
               <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center  justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900 sm:mb-0 mb-4">
                     All Categories
                   </h3>
                   <div className="flex gap-2">
@@ -473,7 +473,7 @@ const Categories = () => {
                 {categories.length > 0 ? (
                   <>
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="p-4 max-h-[600px] overflow-y-auto space-y-2">
+                      <div className="p-2 max-h-[600px] overflow-y-auto space-y-2">
                         {categories.slice(0, displayCount).map((category) => {
                           const categorySubcategories = subcategories.filter(
                             (sub) => sub.category_id === category.id
@@ -489,8 +489,8 @@ const Categories = () => {
                             >
                               {/* Category Row */}
                               <div className="group bg-blue-50 hover:bg-blue-100 transition-colors">
-                                <div className="flex items-center justify-between p-3">
-                                  <div className="flex items-center gap-2 flex-1">
+                                <div className="flex sm:items-center items-start justify-between py-2 px-1">
+                                  <div className="flex items-center  gap-2 flex-1">
                                     <button
                                       onClick={() =>
                                         toggleCategory(category.id)
@@ -534,9 +534,9 @@ const Categories = () => {
                                         <span className="font-semibold text-blue-900 flex-1">
                                           {category.name}
                                         </span>
-                                        <span className="text-xs text-blue-600 bg-blue-200 px-2 py-1 rounded-full">
-                                          {categorySubcategories.length}{" "}
-                                          subcategories
+                                        <span className="text-xs flex border  text-blue-600 bg-blue-200 px-2 py-1 rounded-full">
+                                          {categorySubcategories.length}
+                                          <p>sub</p>
                                         </span>
                                       </>
                                     )}
@@ -654,11 +654,11 @@ const Categories = () => {
                                                     <span className="font-medium text-gray-700 flex-1">
                                                       {subcategory.name}
                                                     </span>
-                                                    <span className="text-xs text-gray-600 bg-gray-200 px-2 py-1 rounded-full">
+                                                    <span className="text-xs flex text-gray-600 bg-gray-200 px-2 py-1 rounded-full">
                                                       {
                                                         subcategoryParttypes.length
                                                       }{" "}
-                                                      parts
+                                                      <p> parts</p>
                                                     </span>
                                                   </>
                                                 )}

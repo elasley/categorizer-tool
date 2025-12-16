@@ -306,7 +306,7 @@ const ParttypesPage = () => {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-gray-50 ">
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">
           <div className="p-3 bg-green-600 rounded-xl">
@@ -337,8 +337,8 @@ const ParttypesPage = () => {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm p-6 mb-6 border border-gray-200">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex-1">
+        <div className="flex flex-col  sm:flex-row items-stretch sm:items-center    justify-between gap-4">
+          <div className="flex-1 w-full">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
               <input
@@ -450,7 +450,10 @@ const ParttypesPage = () => {
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
             Showing {displayedParttypes.length} of {parttypes.length} loaded
             {totalCount > 0 && (
-              <> (out of {totalCount} total part type{totalCount > 1 ? "s" : ""})</>
+              <>
+                {" "}
+                (out of {totalCount} total part type{totalCount > 1 ? "s" : ""})
+              </>
             )}
             {searchTerm && ` (filtered)`}
           </div>
@@ -492,7 +495,7 @@ const ParttypesPage = () => {
               >
                 <option value="">Select subcategories</option>
                 {subcategories.map((sub) => (
-                  <option key={sub.id} value={sub.id} >
+                  <option key={sub.id} value={sub.id}>
                     {categories.find((c) => c.id === sub.category_id)?.name}{" "}
                     {" > "}
                     {sub.name}

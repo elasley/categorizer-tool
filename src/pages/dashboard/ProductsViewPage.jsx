@@ -407,10 +407,10 @@ const ProductsViewPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-6">
+    <div className="min-h-screen bg-gray-50 py-5">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between">
           <div className="flex items-center space-x-4">
             <button
               onClick={() => navigate("/dashboard/reports")}
@@ -419,15 +419,15 @@ const ProductsViewPage = () => {
               <ArrowLeft className="w-6 h-6 text-gray-600" />
             </button>
             <div>
-              <h1 className="text-3xl font-bold text-gray-800">
+              <h1 className="sm:text-3xl text-2xl font-bold text-gray-800">
                 Products View
               </h1>
               <p className="text-gray-600">View and edit product information</p>
             </div>
           </div>
-          <div className="flex items-center space-x-2 bg-white px-4 py-2 rounded-lg border border-gray-200">
-            <Package className="w-5 h-5 text-blue-500" />
-            <span className="font-semibold text-gray-700">
+          <div className="flex sm:items-center   w-full sm:w-fit space-x-2 sm:mt-0 mt-5 bg-white px-4  py-2 rounded-lg border border-gray-200">
+            <Package className="w-5 h-5  text-blue-500" />
+            <span className="font-semibold  text-gray-700">
               {products.length} Products
             </span>
           </div>
@@ -667,7 +667,7 @@ const ProductsViewPage = () => {
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="px-6 py-2.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all font-semibold flex items-center space-x-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="sm:px-6 px-4 py-2.5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all font-semibold flex items-center space-x-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? (
                     <>
@@ -677,7 +677,7 @@ const ProductsViewPage = () => {
                   ) : (
                     <>
                       <Save className="w-4 h-4" />
-                      <span>Save Changes</span>
+                      <span className="sm:text-base text-sm">Save Changes</span>
                     </>
                   )}
                 </button>
