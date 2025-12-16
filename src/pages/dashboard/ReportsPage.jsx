@@ -417,7 +417,7 @@ const ReportsPage = () => {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">
+          <h1 className="text-2xl sm:text-4xl font-bold text-gray-800 mb-2">
             Upload Reports
           </h1>
           <p className="text-gray-600">
@@ -502,7 +502,7 @@ const ReportsPage = () => {
         </div>
 
         {/* Reports Table */}
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200">
           {reports.length === 0 ? (
             <div className="p-12 text-center">
               <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -515,25 +515,25 @@ const ReportsPage = () => {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full table-fixed">
+              <table className="min-w-full table-fixed">
                 <thead>
                   <tr className="bg-blue-500 text-white">
-                    <th className="w-[25%] px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
+                    <th className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wider whitespace-nowrap">
                       File Name
                     </th>
-                    <th className="w-[20%] px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
+                    <th className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wider whitespace-nowrap hidden md:table-cell">
                       Description
                     </th>
-                    <th className="w-[12%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
+                    <th className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider whitespace-nowrap">
                       Products
                     </th>
-                    <th className="w-[13%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
+                    <th className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider whitespace-nowrap">
                       Status
                     </th>
-                    <th className="w-[20%] px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
+                    <th className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wider whitespace-nowrap hidden sm:table-cell">
                       Date
                     </th>
-                    <th className="w-[15%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
+                    <th className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider whitespace-nowrap">
                       Actions
                     </th>
                   </tr>
@@ -546,10 +546,10 @@ const ReportsPage = () => {
                           index % 2 === 0 ? "bg-white" : "bg-gray-50"
                         }`}
                       >
-                        <td className="px-6 py-5">
-                          <div className="flex items-center space-x-3">
+                        <td className="px-3 py-4 align-top">
+                          <div className="flex items-center space-x-2">
                             <div
-                              className={`flex-shrink-0 p-2.5 rounded-lg ${
+                              className={`flex-shrink-0 p-2 rounded-lg ${
                                 report.status === "success"
                                   ? "bg-green-100"
                                   : report.status === "failed"
@@ -567,28 +567,28 @@ const ReportsPage = () => {
                                 }`}
                               />
                             </div>
-                            <span className="font-semibold text-gray-800 truncate">
+                            <span className="font-semibold text-gray-800 truncate text-sm sm:text-base">
                               {report.file_name}
                             </span>
                           </div>
                         </td>
-                        <td className="px-6 py-5">
-                          <span className="text-sm text-gray-600 line-clamp-2">
+                        <td className="px-3 py-4 align-top hidden md:table-cell">
+                          <span className="text-xs sm:text-sm text-gray-600 line-clamp-2">
                             {report.description || "No description"}
                           </span>
                         </td>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center justify-center space-x-2">
+                        <td className="px-3 py-4 align-top">
+                          <div className="flex items-center justify-center space-x-1">
                             <Package className="w-4 h-4 text-indigo-500 flex-shrink-0" />
-                            <span className="font-bold text-xl text-gray-800">
+                            <span className="font-bold text-base sm:text-xl text-gray-800">
                               {report.products_count || 0}
                             </span>
                           </div>
                         </td>
-                        <td className="px-6 py-5">
+                        <td className="px-3 py-4 align-top">
                           <div className="flex justify-center">
                             <span
-                              className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide whitespace-nowrap ${
+                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase tracking-wide whitespace-nowrap ${
                                 report.status === "success"
                                   ? "bg-green-100 text-green-700 border border-green-200"
                                   : report.status === "failed"
@@ -606,11 +606,11 @@ const ReportsPage = () => {
                             </span>
                           </div>
                         </td>
-                        <td className="px-6 py-5">
+                        <td className="px-3 py-4 align-top hidden sm:table-cell">
                           <div className="flex items-center space-x-2 text-gray-600">
                             <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
                             <div>
-                              <div className="text-sm font-medium">
+                              <div className="text-xs font-medium">
                                 {new Date(report.created_at).toLocaleDateString(
                                   "en-US",
                                   {
@@ -620,7 +620,7 @@ const ReportsPage = () => {
                                   }
                                 )}
                               </div>
-                              <div className="text-xs text-gray-400">
+                              <div className="text-[10px] text-gray-400">
                                 {new Date(report.created_at).toLocaleTimeString(
                                   "en-US",
                                   {
@@ -632,8 +632,8 @@ const ReportsPage = () => {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center justify-center space-x-2">
+                        <td className="px-3 py-4 align-top">
+                          <div className="flex items-center justify-center space-x-1">
                             {report.file_url && (
                               <>
                                 <button
@@ -641,11 +641,11 @@ const ReportsPage = () => {
                                     e.stopPropagation();
                                     viewFile(report.file_url, report.file_name);
                                   }}
-                                  className="px-3 py-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-all flex items-center space-x-1.5"
+                                  className="px-2 py-1 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-all flex items-center space-x-1"
                                   title="View file"
                                 >
                                   <Eye className="w-4 h-4" />
-                                  <span className="text-xs font-semibold">
+                                  <span className="text-xs font-semibold hidden sm:inline">
                                     View
                                   </span>
                                 </button>
@@ -657,7 +657,7 @@ const ReportsPage = () => {
                                       report.file_name
                                     );
                                   }}
-                                  className="p-2.5 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-all"
+                                  className="p-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-all"
                                   title="Download file"
                                 >
                                   <Download className="w-4 h-4" />
@@ -669,7 +669,7 @@ const ReportsPage = () => {
                       </tr>
                       {expandedReport === report.id && (
                         <tr className="bg-gradient-to-r from-gray-50 to-blue-50">
-                          <td colSpan="5" className="px-6 py-4">
+                          <td colSpan="6" className="px-3 py-4">
                             <div className="max-w-4xl mx-auto space-y-3">
                               {report.description && (
                                 <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">

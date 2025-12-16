@@ -21,7 +21,8 @@ const CategoriesPage = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({ name: "" });
-  const [displayCount, setDisplayCount] = useState(20);
+  const [page, setPage] = useState(1); // <-- add page state
+  const [totalCount, setTotalCount] = useState(0); // <-- total count for pagination
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -29,66 +30,58 @@ const CategoriesPage = () => {
   const [deleting, setDeleting] = useState(false);
   const observerTarget = React.useRef(null);
 
-  useEffect(() => {
-    loadCategories();
-  }, []);
+  const PAGE_SIZE = 20;
 
-  const loadCategories = async () => {
-    setLoading(true);
+  useEffect(() => {
+    setCategories([]);
+    setPage(1);
+    loadCategories(1, true);
+    // eslint-disable-next-line
+  }, [searchTerm]);
+
+  // Fetch categories with pagination
+  const loadCategories = async (pageToLoad = 1, reset = false) => {
+    if (reset) setLoading(true);
+    else setLoadingMore(true);
+
     try {
-      const { data, error } = await supabase
+      const from = (pageToLoad - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      let query = supabase
         .from("categories")
-        .select("*")
-        .order("name");
+        .select("*", { count: "exact" })
+        .order("name")
+        .range(from, to);
+
+      if (searchTerm.trim() !== "") {
+        query = query.ilike("name", `%${searchTerm}%`);
+      }
+
+      const { data, error, count } = await query;
 
       if (error) throw error;
-      setCategories(data || []);
+
+      setCategories((prev) =>
+        reset ? data || [] : [...prev, ...(data || [])]
+      );
+      if (typeof count === "number") setTotalCount(count);
     } catch (error) {
       console.error("Error loading categories:", error);
       toast.error("Failed to load categories");
     } finally {
-      setLoading(false);
+      if (reset) setLoading(false);
+      else setLoadingMore(false);
     }
   };
 
+  // Infinite scroll observer
   useEffect(() => {
-    if (searchTerm.trim() === "") {
-      loadCategories();
-      return;
-    }
-    // Debounce search
-    const timeout = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("categories")
-          .select("*")
-          .ilike("name", `%${searchTerm}%`)
-          .order("name");
-        if (error) throw error;
-        setCategories(data || []);
-      } catch (error) {
-        toast.error("Failed to search categories");
-      } finally {
-        setLoading(false);
-      }
-    }, 500);
-    return () => clearTimeout(timeout);
-    // eslint-disable-next-line
-  }, [searchTerm]);
-
-  // Remove local filtering, just use categories as fetched
-  const displayedCategories = categories.slice(0, displayCount);
-
-  useEffect(() => {
+    if (loading || loadingMore) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && displayCount < categories.length) {
-          setLoadingMore(true);
-          setTimeout(() => {
-            setDisplayCount((prev) => prev + 20);
-            setLoadingMore(false);
-          }, 500);
+        if (entries[0].isIntersecting && categories.length < totalCount) {
+          setPage((prev) => prev + 1);
         }
       },
       { threshold: 1.0 }
@@ -103,7 +96,15 @@ const CategoriesPage = () => {
         observer.unobserve(observerTarget.current);
       }
     };
-  }, [displayCount, categories.length]);
+    // eslint-disable-next-line
+  }, [categories, totalCount, loading, loadingMore]);
+
+  // Fetch next page when page changes (but not on first load)
+  useEffect(() => {
+    if (page === 1) return;
+    loadCategories(page, false);
+    // eslint-disable-next-line
+  }, [page]);
 
   const handleAdd = async () => {
     if (!formData.name.trim()) {
@@ -227,7 +228,7 @@ const CategoriesPage = () => {
           </div>
         ) : (
           <>
-            <div className="text-4xl font-bold mb-1">{categories.length}</div>
+            <div className="text-4xl font-bold mb-1">{totalCount}</div>
             <div className="text-blue-100">Total Categories</div>
           </>
         )}
@@ -283,7 +284,7 @@ const CategoriesPage = () => {
             </div>
           ) : (
             <>
-              {displayedCategories.map((category) => (
+              {categories.map((category) => (
                 <div
                   key={category.id}
                   className="p-4 hover:bg-gray-50 transition-colors flex items-center justify-between"
@@ -322,7 +323,7 @@ const CategoriesPage = () => {
                 </div>
               ))}
               {/* Infinite scroll trigger */}
-              {displayCount < categories.length && (
+              {categories.length < totalCount && (
                 <div ref={observerTarget} className="p-4">
                   {loadingMore && (
                     <div className="flex justify-center">
@@ -338,10 +339,9 @@ const CategoriesPage = () => {
         {/* Pagination Footer */}
         {!loading && categories.length > 0 && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            Showing {Math.min(displayCount, categories.length)} of{" "}
-            {categories.length}{" "}
-            {categories.length === 1 ? "category" : "categories"}
-            {searchTerm && ` (filtered from ${categories.length} total)`}
+            Showing {categories.length} of {totalCount}{" "}
+            {totalCount === 1 ? "category" : "categories"}
+            {searchTerm && ` (filtered from ${totalCount} total)`}
           </div>
         )}
       </div>

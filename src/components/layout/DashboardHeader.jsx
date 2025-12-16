@@ -48,18 +48,6 @@ const DashboardHeader = ({ onMenuClick, isSidebarOpen }) => {
             <div className="hidden lg:block">
               <Logo />
             </div>
-
-            {/* Search Bar - Hidden on mobile */}
-            <div className="hidden lg:flex items-center ">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search products..."
-                  className="pl-10 pr-4 py-2 w-64 lg:w-80 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            </div>
             <div className="flex items-center gap-2 sm:gap-3">
               {/* AI Status Indicator */}
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-full shadow-md">
@@ -72,7 +60,7 @@ const DashboardHeader = ({ onMenuClick, isSidebarOpen }) => {
               {/* Settings */}
               <button
                 onClick={() => navigate("/dashboard/settings")}
-                className="hidden sm:block p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className=" p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <Settings className="w-5 h-5 text-gray-600 animate-spin" />
               </button>
