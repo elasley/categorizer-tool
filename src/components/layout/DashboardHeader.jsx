@@ -22,8 +22,16 @@ const DashboardHeader = ({ onMenuClick, isSidebarOpen }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
 
   const handleSignOut = async () => {
-    await dispatch(signOut());
-    navigate("/login");
+    try {
+      setShowUserMenu(false);
+      await dispatch(signOut()).unwrap();
+      // Force navigation to login after signout
+      navigate("/login", { replace: true });
+    } catch (error) {
+      console.error("Signout failed:", error);
+      // Still navigate to login even if signout fails
+      navigate("/login", { replace: true });
+    }
   };
 
   return (

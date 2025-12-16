@@ -12,11 +12,14 @@ const PrivateRoute = ({ children }) => {
 
   useEffect(() => {
     const verify = async () => {
-      await dispatch(checkSession());
+      // Only check session if we think we're authenticated
+      if (isAuthenticated || checking) {
+        await dispatch(checkSession());
+      }
       setChecking(false);
     };
     verify();
-  }, [dispatch]);
+  }, [dispatch, isAuthenticated, checking]);
 
   if (checking || loading) {
     return <LoadingSpinner fullScreen text="Loading..." />;

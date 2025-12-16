@@ -32,6 +32,7 @@ import AdvancedSettings from "./AdvancedSettings";
 import TaxonomyManager from "./TaxonomyManager";
 import BulkAssignmentTool from "./BulkAssignmentTool";
 import UploadToSupabaseModal from "./UploadToSupabaseModal";
+import { generateProductEmbeddings } from "../utils/embeddingGenerator";
 
 import { parseCSV, validateCSV, exportToCSV } from "../utils/csvParser";
 import { parseCategoryCSV, validateCategoryCSV } from "../utils/csvParser";
@@ -865,16 +866,15 @@ const AcesPiesCategorizationTool = () => {
 
     let productsToSend;
     try {
-      // Dynamically import the embedding generator
-      const { generateProductEmbeddings } = await import(
-        "../utils/embeddingGenerator"
-      );
-
       const productsForEmbedding = products.map((p, index) => ({
         id: p.id || `product-${index}`,
         name: p.name || p.productName || "",
         description: p.description || "",
       }));
+
+      toast.loading(`🔄 Generating embeddings...`, {
+        id: loadingToast,
+      });
 
       // Generate embeddings with progress updates
       productsToSend = await generateProductEmbeddings(
@@ -897,8 +897,19 @@ const AcesPiesCategorizationTool = () => {
       );
     } catch (embeddingError) {
       console.error("❌ Embedding generation failed:", embeddingError);
-      toast.error(`Failed to generate embeddings: ${embeddingError.message}`, {
+
+      let errorMessage = embeddingError.message;
+      if (
+        errorMessage.includes("not valid JSON") ||
+        errorMessage.includes("<!doctype")
+      ) {
+        errorMessage =
+          "Failed to load AI model. Please check your internet connection and try again.";
+      }
+
+      toast.error(`Embedding Error: ${errorMessage}`, {
         id: loadingToast,
+        duration: 6000,
       });
       setIsProcessing(false);
       return;

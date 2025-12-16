@@ -22,6 +22,7 @@ import ParttypesPage from "./pages/dashboard/ParttypesPage";
 import ReportsPage from "./pages/dashboard/ReportsPage";
 import ProductsViewPage from "./pages/dashboard/ProductsViewPage";
 import PrivateRoute from "./components/PrivateRoute";
+import PublicRoute from "./components/PublicRoute";
 import LoadingSpinner from "./components/LoadingSpinner";
 import { SplineIcon } from "lucide-react";
 // Import existing categorization tool
@@ -63,10 +64,24 @@ function App() {
       >
         <BrowserRouter>
           <Routes>
-            {/* Public Routes */}
-            <Route path="/" element={<Navigate to="/login" replace />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
+            {/* Public Routes - Redirect to dashboard if authenticated */}
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route
+              path="/login"
+              element={
+                <PublicRoute>
+                  <Login />
+                </PublicRoute>
+              }
+            />
+            <Route
+              path="/signup"
+              element={
+                <PublicRoute>
+                  <Signup />
+                </PublicRoute>
+              }
+            />
             <Route path="/verify-otp" element={<VerifyOtp />} />
 
             {/* Protected Dashboard Routes */}

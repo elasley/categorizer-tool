@@ -3,22 +3,94 @@
  * Generates MiniLM-v2 embeddings (384 dimensions) for products in the browser
  */
 
-let pipeline = null;
+import { pipeline, env } from "@xenova/transformers";
+
+// Configure environment BEFORE any pipeline creation
+env.allowLocalModels = false;
+env.allowRemoteModels = true;
+env.useBrowserCache = true;
+
+let pipelineInstance = null;
+let isInitializing = false;
+let initializationPromise = null;
 
 /**
  * Lazy-load the MiniLM-v2 pipeline (singleton pattern)
  */
 const getEmbeddingPipeline = async () => {
-  if (!pipeline) {
-    console.log("🔄 Loading MiniLM-v2 model for embeddings...");
-    const { pipeline: createPipeline } = await import("@xenova/transformers");
-    pipeline = await createPipeline(
-      "feature-extraction",
-      "Xenova/all-MiniLM-L6-v2"
-    );
-    console.log("✅ MiniLM-v2 model loaded successfully");
+  // Return existing pipeline
+  if (pipelineInstance) {
+    return pipelineInstance;
   }
-  return pipeline;
+
+  // If already initializing, wait for that initialization
+  if (isInitializing && initializationPromise) {
+    return initializationPromise;
+  }
+
+  isInitializing = true;
+
+  initializationPromise = (async () => {
+    try {
+      console.log("🔄 Loading MiniLM-v2 model for embeddings...");
+      console.log("   This may take 30-60 seconds on first load...");
+
+      // Create pipeline with proper error handling
+      pipelineInstance = await pipeline(
+        "feature-extraction",
+        "Xenova/all-MiniLM-L6-v2",
+        {
+          quantized: true,
+          progress_callback: (data) => {
+            if (data.status === "downloading") {
+              const percent = data.progress ? Math.round(data.progress) : 0;
+              console.log(`   Downloading ${data.file}: ${percent}%`);
+            } else if (data.status === "done") {
+              console.log(`   ✓ ${data.file} loaded`);
+            }
+          },
+        }
+      );
+
+      console.log("✅ MiniLM-v2 model loaded successfully");
+      return pipelineInstance;
+    } catch (error) {
+      pipelineInstance = null;
+      console.error("❌ Failed to load MiniLM-v2 model:", error);
+
+      // Provide specific error messages
+      let errorMsg = error.message || "Unknown error";
+
+      if (
+        errorMsg.includes("not valid JSON") ||
+        errorMsg.includes("<!doctype") ||
+        errorMsg.includes("<!DOCTYPE")
+      ) {
+        throw new Error(
+          "Failed to download AI model from CDN. This could be due to:\n" +
+            "1. Internet connection issues\n" +
+            "2. Firewall or antivirus blocking the download\n" +
+            "3. Corporate proxy blocking HuggingFace CDN\n" +
+            "Please check your network settings and try again."
+        );
+      } else if (errorMsg.includes("CORS")) {
+        throw new Error(
+          "CORS error: Browser is blocking model download. Try using a different browser or check browser extensions."
+        );
+      } else if (errorMsg.includes("timeout") || errorMsg.includes("network")) {
+        throw new Error(
+          "Network timeout: The model download is taking too long. Please check your internet speed and try again."
+        );
+      }
+
+      throw new Error(`Failed to load AI model: ${errorMsg}`);
+    } finally {
+      isInitializing = false;
+      initializationPromise = null;
+    }
+  })();
+
+  return initializationPromise;
 };
 
 /**
