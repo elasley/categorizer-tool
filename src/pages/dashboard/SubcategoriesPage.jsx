@@ -308,9 +308,7 @@ const SubcategoriesPage = () => {
           </div>
         ) : (
           <>
-            <div className="text-4xl font-bold mb-1">
-              {subcategories.length}
-            </div>
+            <div className="text-4xl font-bold mb-1">{totalCount}</div>
             <div className="text-purple-100">Total Subcategories</div>
           </>
         )}

@@ -330,7 +330,7 @@ const ParttypesPage = () => {
           </div>
         ) : (
           <>
-            <div className="text-4xl font-bold mb-1">{parttypes.length}</div>
+            <div className="text-4xl font-bold mb-1">{totalCount}</div>
             <div className="text-green-100">Total Part Types</div>
           </>
         )}
