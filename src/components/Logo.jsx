@@ -7,7 +7,7 @@ const Logo = () => {
     <div className="flex items-center gap-3">
       <div className="relative w-12 h-12">
         {/* Animated gradient background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 rounded-xl shadow-lg animate-pulse"></div>
+        <div className="absolute  inset-0 bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 rounded-xl shadow-lg animate-pulse"></div>
         <div className="absolute inset-0 bg-gradient-to-tr from-blue-400 to-indigo-400 rounded-xl opacity-50 blur-sm"></div>
 
         {/* Icon */}

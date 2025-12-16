@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../config/supabase";
 import {
@@ -13,8 +13,24 @@ import {
   Download,
   ExternalLink,
   Eye,
+  Search,
 } from "lucide-react";
 import toast from "react-hot-toast";
+
+// Skeleton loader component
+const TableSkeleton = ({ rows = 8 }) => (
+  <tbody>
+    {Array.from({ length: rows }).map((_, idx) => (
+      <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+        {Array.from({ length: 6 }).map((_, colIdx) => (
+          <td key={colIdx} className="px-6 py-5">
+            <div className="h-4 bg-gray-200 rounded animate-pulse w-full"></div>
+          </td>
+        ))}
+      </tr>
+    ))}
+  </tbody>
+);
 
 const ReportsPage = () => {
   const navigate = useNavigate();
@@ -26,82 +42,119 @@ const ReportsPage = () => {
   const [expandedReport, setExpandedReport] = useState(null);
   const [viewingFile, setViewingFile] = useState(null);
   const [csvData, setCsvData] = useState(null);
+  const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const searchTimeout = useRef(null);
 
-  const ITEMS_PER_PAGE = 20;
+  const ITEMS_PER_PAGE = 20; // Use 20 for a more natural scroll experience
 
-  // Fetch reports with pagination
-  const fetchReports = useCallback(async (pageNum = 0, append = false) => {
-    try {
-      if (pageNum === 0) {
-        setLoading(true);
-      } else {
-        setLoadingMore(true);
-      }
+  // Fetch reports with pagination or search
+  const fetchReports = useCallback(
+    async (pageNum = 0, append = false, searchTerm = "") => {
+      try {
+        if (searchTerm) setSearching(true);
+        if (pageNum === 0 && !searchTerm) setLoading(true);
+        if (pageNum > 0 && !searchTerm) setLoadingMore(true);
 
-      const from = pageNum * ITEMS_PER_PAGE;
-      const to = from + ITEMS_PER_PAGE - 1;
+        let from = pageNum * ITEMS_PER_PAGE;
+        let to = from + ITEMS_PER_PAGE - 1;
 
-      // Fetch upload history with product count
-      const { data, error, count } = await supabase
-        .from("upload_history")
-        .select("*, products:products(count)", { count: "exact" })
-        .order("created_at", { ascending: false })
-        .range(from, to);
+        let query = supabase
+          .from("upload_history")
+          .select("*, products:products(count)", { count: "exact" })
+          .order("created_at", { ascending: false });
 
-      if (error) throw error;
-
-      if (data) {
-        if (append) {
-          setReports((prev) => [...prev, ...data]);
+        if (searchTerm) {
+          // Search in file_name (case-insensitive)
+          query = query.ilike("file_name", `%${searchTerm}%`);
         } else {
-          setReports(data);
+          query = query.range(from, to);
         }
 
-        // Check if there are more records
-        setHasMore(
-          data.length === ITEMS_PER_PAGE && from + ITEMS_PER_PAGE < count
-        );
+        const { data, error, count } = await query;
+
+        if (error) throw error;
+
+        if (data) {
+          if (append && !searchTerm) {
+            setReports((prev) => [...prev, ...data]);
+          } else {
+            setReports(data);
+          }
+          // For search, no pagination
+          if (searchTerm) {
+            setHasMore(false);
+            setTotalCount(data.length);
+          } else {
+            setHasMore(
+              data.length === ITEMS_PER_PAGE && from + ITEMS_PER_PAGE < count
+            );
+            setTotalCount(count || 0);
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching reports:", error);
+        toast.error("Failed to load reports");
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+        setSearching(false);
       }
-    } catch (error) {
-      console.error("Error fetching reports:", error);
-      toast.error("Failed to load reports");
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
+    },
+    []
+  );
+
+  // Initial load (paginated)
+  useEffect(() => {
+    if (!search) {
+      setPage(0);
+      fetchReports(0, false, "");
     }
-  }, []);
+  }, [fetchReports, search]);
 
-  // Initial load
+  // Search effect (debounced)
   useEffect(() => {
-    fetchReports(0, false);
-  }, [fetchReports]);
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
 
-  // Load more handler
-  const loadMore = () => {
-    const nextPage = page + 1;
-    setPage(nextPage);
-    fetchReports(nextPage, true);
-  };
+    if (search) {
+      searchTimeout.current = setTimeout(() => {
+        fetchReports(0, false, search.trim());
+      }, 500);
+    } else {
+      // If search cleared, reload paginated
+      setSearching(false);
+      fetchReports(0, false, "");
+    }
+    return () => {
+      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    };
+  }, [search, fetchReports]);
 
-  // Scroll pagination
+  // Infinite scroll handler (only when not searching)
   useEffect(() => {
+    if (search) return;
     const handleScroll = () => {
       if (loadingMore || !hasMore) return;
-
-      const scrollTop =
-        window.pageYOffset || document.documentElement.scrollTop;
+      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
       const scrollHeight = document.documentElement.scrollHeight;
       const clientHeight = document.documentElement.clientHeight;
-
-      // Trigger load when user is 200px from bottom
+      // If user is near the bottom, load more
       if (scrollTop + clientHeight >= scrollHeight - 200) {
         loadMore();
       }
     };
-
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [loadingMore, hasMore, page]);
+  }, [loadingMore, hasMore, page, search]);
+
+  const loadMore = () => {
+    if (search) return;
+    if (loadingMore || !hasMore) return; // Prevent duplicate calls
+    const nextPage = page + 1;
+    setPage(nextPage);
+    fetchReports(nextPage, true, "");
+  };
 
   // Toggle report details
   const toggleExpand = (reportId) => {
@@ -288,12 +341,72 @@ const ReportsPage = () => {
     }
   };
 
-  if (loading) {
+  if (loading && !searching) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
-          <p className="text-gray-600 font-medium">Loading reports...</p>
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-4xl font-bold text-gray-800 mb-2">
+              Upload Reports
+            </h1>
+            <p className="text-gray-600">
+              View all product upload history and download files
+            </p>
+          </div>
+          {/* Stats Cards Skeleton */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            {Array.from({ length: 3 }).map((_, idx) => (
+              <div
+                key={idx}
+                className="bg-white rounded-xl p-6 border border-gray-200"
+              >
+                <div className="h-8 bg-gray-200 rounded w-1/2 mb-4 animate-pulse"></div>
+                <div className="h-6 bg-gray-100 rounded w-1/3 animate-pulse"></div>
+              </div>
+            ))}
+          </div>
+          {/* Search Bar Skeleton */}
+          <div className="mb-6 flex items-center">
+            <div className="relative w-full md:w-96">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <Search className="w-5 h-5 text-gray-300" />
+              </span>
+              <div className="pl-10 pr-4 py-2 w-full h-10 bg-gray-200 rounded-lg animate-pulse"></div>
+            </div>
+          </div>
+          {/* Table Skeleton */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full table-fixed">
+              <thead>
+                <tr className="bg-blue-500 text-white">
+                  <th className="w-[25%] px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
+                    File Name
+                  </th>
+                  <th className="w-[20%] px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
+                    Description
+                  </th>
+                  <th className="w-[12%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
+                    Products
+                  </th>
+                  <th className="w-[13%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="w-[20%] px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
+                    Date
+                  </th>
+                  <th className="w-[15%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <TableSkeleton rows={8} />
+            </table>
+          </div>
+          {/* Bottom Info Bar Skeleton */}
+          <div className="w-full bg-gray-50 border-t border-gray-200 px-6 py-3 mt-2">
+            <div className="h-4 bg-gray-200 rounded w-32 animate-pulse"></div>
+          </div>
         </div>
       </div>
     );
@@ -368,6 +481,24 @@ const ReportsPage = () => {
               </div>
             </div>
           </div>
+        </div>
+        {/* Search Bar */}
+        <div className="mb-6 flex items-center">
+          <div className="relative w-full md:w-96">
+            <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+              <Search className="w-5 h-5 text-gray-400" />
+            </span>
+            <input
+              type="text"
+              className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800"
+              placeholder="Search by file name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          {/* {searching && (
+            <Loader2 className="w-5 h-5 text-blue-500 animate-spin ml-3" />
+          )} */}
         </div>
 
         {/* Reports Table */}
@@ -572,8 +703,17 @@ const ReportsPage = () => {
           )}
         </div>
 
+        {/* Bottom Info Bar styled like the screenshot */}
+        {!search && (
+          <div className="w-full bg-gray-50 border-t border-gray-200 px-6 py-3">
+            <span className="text-gray-600 text-sm">
+              Showing {reports.length} of {totalCount} records
+            </span>
+          </div>
+        )}
+
         {/* Loading More Indicator */}
-        {loadingMore && (
+        {loadingMore && !search && (
           <div className="flex justify-center items-center py-8">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin mr-3" />
             <span className="text-gray-600 font-medium">Loading more...</span>

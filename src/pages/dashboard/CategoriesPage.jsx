@@ -51,18 +51,41 @@ const CategoriesPage = () => {
     }
   };
 
-  const filteredCategories = categories.filter((cat) =>
-    cat.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  useEffect(() => {
+    if (searchTerm.trim() === "") {
+      loadCategories();
+      return;
+    }
+    // Debounce search
+    const timeout = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("categories")
+          .select("*")
+          .ilike("name", `%${searchTerm}%`)
+          .order("name");
+        if (error) throw error;
+        setCategories(data || []);
+      } catch (error) {
+        toast.error("Failed to search categories");
+      } finally {
+        setLoading(false);
+      }
+    }, 500);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line
+  }, [searchTerm]);
 
-  const displayedCategories = filteredCategories.slice(0, displayCount);
+  // Remove local filtering, just use categories as fetched
+  const displayedCategories = categories.slice(0, displayCount);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         if (
           entries[0].isIntersecting &&
-          displayCount < filteredCategories.length
+          displayCount < categories.length
         ) {
           setLoadingMore(true);
           setTimeout(() => {
@@ -83,7 +106,7 @@ const CategoriesPage = () => {
         observer.unobserve(observerTarget.current);
       }
     };
-  }, [displayCount, filteredCategories.length]);
+  }, [displayCount, categories.length]);
 
   const handleAdd = async () => {
     if (!formData.name.trim()) {
@@ -223,7 +246,7 @@ const CategoriesPage = () => {
                 placeholder="Search categories..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
           </div>
@@ -246,7 +269,7 @@ const CategoriesPage = () => {
             All Categories
           </h2>
           <span className="text-sm text-gray-500">
-            {filteredCategories.length} categories
+            {categories.length} categories
           </span>
         </div>
 
@@ -256,7 +279,7 @@ const CategoriesPage = () => {
             Array.from({ length: 8 }).map((_, idx) => (
               <SkeletonCard key={idx} />
             ))
-          ) : filteredCategories.length === 0 ? (
+          ) : categories.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
               <p>No categories found</p>
@@ -302,7 +325,7 @@ const CategoriesPage = () => {
                 </div>
               ))}
               {/* Infinite scroll trigger */}
-              {displayCount < filteredCategories.length && (
+              {displayCount < categories.length && (
                 <div ref={observerTarget} className="p-4">
                   {loadingMore && (
                     <div className="flex justify-center">
@@ -316,11 +339,11 @@ const CategoriesPage = () => {
         </div>
 
         {/* Pagination Footer */}
-        {!loading && filteredCategories.length > 0 && (
+        {!loading && categories.length > 0 && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            Showing {Math.min(displayCount, filteredCategories.length)} of{" "}
-            {filteredCategories.length}{" "}
-            {filteredCategories.length === 1 ? "category" : "categories"}
+            Showing {Math.min(displayCount, categories.length)} of{" "}
+            {categories.length}{" "}
+            {categories.length === 1 ? "category" : "categories"}
             {searchTerm && ` (filtered from ${categories.length} total)`}
           </div>
         )}
@@ -340,7 +363,7 @@ const CategoriesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="Enter categories name"
                 autoFocus
               />
@@ -389,7 +412,7 @@ const CategoriesPage = () => {
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="Enter category name"
                 autoFocus
               />
