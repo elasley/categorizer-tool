@@ -68,7 +68,7 @@ const DashboardHome = () => {
 
   // Remove handleViewAllUploads async logic, just navigate
   const handleViewAllUploads = () => {
-    navigate("/dashboard/reports");
+    navigate("/reports");
   };
 
   const stats = [
@@ -223,7 +223,7 @@ const DashboardHome = () => {
             <button
               className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
                hover:bg-blue-600 group"
-              onClick={() => navigate("/dashboard/categorize")}
+              onClick={() => navigate("/categorize")}
             >
               <div className="flex items-center gap-3">
                 <Package className="w-5 h-5 text-gray-600 group-hover:text-white" />
@@ -236,7 +236,7 @@ const DashboardHome = () => {
             <button
               className="w-full p-4 bg-gray-50 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg text-left
                hover:bg-blue-600 group border border-gray-200"
-              onClick={() => navigate("/dashboard/reports")}
+              onClick={() => navigate("/reports")}
             >
               <div className="flex items-center gap-3">
                 <TrendingUp className="w-5 h-5 text-gray-600 group-hover:text-white" />

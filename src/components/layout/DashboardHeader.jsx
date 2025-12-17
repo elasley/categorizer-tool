@@ -67,7 +67,7 @@ const DashboardHeader = ({ onMenuClick, isSidebarOpen }) => {
 
               {/* Settings */}
               <button
-                onClick={() => navigate("/dashboard/settings")}
+                onClick={() => navigate("/settings")}
                 className=" p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <Settings className="w-5 h-5 text-gray-600 animate-spin" />
@@ -107,7 +107,7 @@ const DashboardHeader = ({ onMenuClick, isSidebarOpen }) => {
                         <button
                           onClick={() => {
                             setShowUserMenu(false);
-                            navigate("/dashboard/profile");
+                            navigate("/profile");
                           }}
                           className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
                         >
@@ -117,7 +117,7 @@ const DashboardHeader = ({ onMenuClick, isSidebarOpen }) => {
                         <button
                           onClick={() => {
                             setShowUserMenu(false);
-                            navigate("/dashboard/settings");
+                            navigate("/settings");
                           }}
                           className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
                         >
