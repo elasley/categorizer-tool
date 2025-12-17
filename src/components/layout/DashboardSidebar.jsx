@@ -26,16 +26,16 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
         {
           icon: Upload,
           label: "Categorize tools",
-          path: "/dashboard/categorize",
+          path: "/categorize",
         },
-        // { icon: FileText, label: "My Products", path: "/dashboard/export" },
+        // { icon: FileText, label: "My Products", path: "/export" },
       ],
     },
     {
       title: "Analytics",
       items: [
-        { icon: BarChart3, label: "Reports", path: "/dashboard/reports" },
-        // { icon: Zap, label: "AI Insights", path: "/dashboard/insights" },
+        { icon: BarChart3, label: "Reports", path: "/reports" },
+        // { icon: Zap, label: "AI Insights", path: "/insights" },
       ],
     },
     {
@@ -44,23 +44,23 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
         {
           icon: Network,
           label: "Categories Tree",
-          path: "/dashboard/categories",
+          path: "/categories",
         },
-        { icon: Tag, label: "Categories", path: "/dashboard/categories-list" },
+        { icon: Tag, label: "Categories", path: "/categories-list" },
         {
           icon: Layers,
           label: "Subcategories",
-          path: "/dashboard/subcategories",
+          path: "/subcategories",
         },
-        { icon: Box, label: "Part Types", path: "/dashboard/parttypes" },
-        // { icon: FolderOpen, label: "Products", path: "/dashboard/products" },
+        { icon: Box, label: "Part Types", path: "/parttypes" },
+        // { icon: FolderOpen, label: "Products", path: "/products" },
       ],
     },
     {
       title: "Settings",
       items: [
-        { icon: Settings, label: "Settings", path: "/dashboard/settings" },
-        // { icon: HelpCircle, label: "Help & Support", path: "/dashboard/help" },
+        { icon: Settings, label: "Settings", path: "/settings" },
+        // { icon: HelpCircle, label: "Help & Support", path: "/help" },
       ],
     },
   ];

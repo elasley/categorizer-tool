@@ -242,9 +242,28 @@ serve(async (req) => {
       "🚀 Starting semantic categorization using MiniLM embeddings..."
     );
 
+    // Check if cache function exists
+    console.log("🔍 Checking if product_classifications cache is available...");
+    const { data: cacheTableCheck, error: cacheTableError } =
+      await supabaseClient
+        .from("product_classifications")
+        .select("count")
+        .limit(1);
+
+    const cacheAvailable = !cacheTableError;
+    if (cacheAvailable) {
+      console.log("✅ product_classifications table found - cache enabled");
+    } else {
+      console.warn(
+        "⚠️  product_classifications table not found - cache disabled"
+      );
+      console.warn("   Error:", cacheTableError?.message);
+    }
+
     const categorizedProducts = [];
     let successCount = 0;
     let skippedCount = 0;
+    let cacheHitCount = 0;
 
     // Process products with pure semantic matching
     for (let i = 0; i < products.length; i++) {
@@ -309,6 +328,137 @@ serve(async (req) => {
           console.log(
             `   ✅ Valid embedding for "${product.name}" (384 dimensions)`
           );
+        }
+
+        // 🔍 STEP 0: Check if we have a cached classification with similar embedding
+        const SIMILARITY_THRESHOLD = 0.85; // 85% similarity threshold for cache hit
+        let cacheChecked = false;
+        let cacheHit = false;
+
+        // Only check cache if table is available
+        if (cacheAvailable) {
+          if (i < 5) {
+            console.log(
+              `\n🔍 Checking cache for product #${i + 1}: "${product.name}"`
+            );
+          }
+
+          try {
+            // Query product_classifications table for similar products using correct RPC function
+            const { data: cachedClassifications, error: cacheError } =
+              await supabaseClient.rpc("match_product_classifications", {
+                query_embedding: productEmbedding,
+                match_threshold: SIMILARITY_THRESHOLD,
+                match_count: 1,
+              });
+
+            cacheChecked = true;
+
+            if (cacheError) {
+              console.warn(
+                `⚠️  Cache query error for "${product.name}":`,
+                cacheError.message
+              );
+              if (i < 3) {
+                console.warn(`   Error details:`, JSON.stringify(cacheError));
+              }
+            } else {
+              if (i < 5) {
+                console.log(
+                  `   ✅ Cache query successful. Found ${
+                    cachedClassifications?.length || 0
+                  } matches`
+                );
+              }
+            }
+
+            // If we found a similar product with high confidence, reuse its classification
+            if (cachedClassifications && cachedClassifications.length > 0) {
+              const cachedResult = cachedClassifications[0];
+              const similarity = cachedResult.similarity || 0;
+
+              if (i < 5) {
+                console.log(
+                  `   📊 Best match: "${
+                    cachedResult.product_name
+                  }" (similarity: ${(similarity * 100).toFixed(2)}%)`
+                );
+              }
+
+              if (similarity >= SIMILARITY_THRESHOLD) {
+                console.log(
+                  `   ♻️  Cache HIT #${cacheHitCount + 1} for "${
+                    product.name
+                  }" (${(similarity * 100).toFixed(2)}% similar to "${
+                    cachedResult.product_name
+                  }")`
+                );
+
+                cacheHit = true;
+
+                // Reuse cached classification
+                categorizedProducts.push({
+                  id: product.id,
+                  category: cachedResult.suggested_category,
+                  subcategory: cachedResult.suggested_subcategory,
+                  partType: cachedResult.suggested_parttype,
+                  category_id: null, // Will be resolved later if needed
+                  subcategory_id: null,
+                  parttype_id: null,
+                  confidence: cachedResult.confidence,
+                  cached: true,
+                  similarity: Math.round(similarity * 100),
+                });
+
+                // Update usage statistics in cache
+                const { error: updateError } = await supabaseClient
+                  .from("product_classifications")
+                  .update({
+                    usage_count: (cachedResult.usage_count || 0) + 1,
+                    last_used_at: new Date().toISOString(),
+                  })
+                  .eq("id", cachedResult.id);
+
+                if (updateError && i < 3) {
+                  console.warn(
+                    `   ⚠️  Failed to update usage stats:`,
+                    updateError.message
+                  );
+                }
+
+                cacheHitCount++;
+                successCount++;
+                continue; // Skip to next product
+              } else {
+                if (i < 5) {
+                  console.log(
+                    `   ❌ Similarity ${(similarity * 100).toFixed(
+                      2
+                    )}% below threshold ${SIMILARITY_THRESHOLD * 100}%`
+                  );
+                }
+              }
+            } else {
+              if (i < 5) {
+                console.log(
+                  `   ❌ No cached matches found for "${product.name}"`
+                );
+              }
+            }
+          } catch (cacheCheckError) {
+            console.error(
+              `❌ Cache check failed for "${product.name}":`,
+              cacheCheckError
+            );
+          }
+        } else {
+          if (i === 0) {
+            console.log(`   ⏭️  Skipping cache check - table not available`);
+          }
+        }
+
+        if (i < 5 && !cacheHit) {
+          console.log(`   🔄 Proceeding with semantic categorization...`);
         }
 
         // STEP 1: Find best matching CATEGORY using pure cosine similarity
@@ -581,7 +731,16 @@ serve(async (req) => {
           subcategory_id: bestSubcategory.id,
           parttype_id: bestParttype.id,
           confidence: confidence,
+          cached: false,
         });
+
+        // 💾 Cache save disabled for vector categorization
+        // Only OpenAI Auto-Suggest should save to product_classifications
+        // This prevents duplicate/redundant cache entries from vector similarity
+        if (i === 0) {
+          console.log(`   ⏭️  Cache save disabled for vector categorization`);
+          console.log(`   ℹ️  Only OpenAI Auto-Suggest saves to cache`);
+        }
 
         successCount++;
       } catch (productError) {
@@ -595,6 +754,30 @@ serve(async (req) => {
     console.log(
       `\n✅ Categorization complete: ${successCount}/${products.length} products (${skippedCount} skipped)`
     );
+
+    const newCategorizations = successCount - cacheHitCount;
+
+    console.log(`\n📊 CACHE PERFORMANCE SUMMARY:`);
+    console.log(`   Total products processed: ${successCount}`);
+    console.log(`   Cache hits: ${cacheHitCount}`);
+    console.log(`   New categorizations: ${newCategorizations}`);
+
+    if (cacheAvailable && newCategorizations > 0) {
+      console.log(
+        `   💾 Attempted to save ${newCategorizations} new classifications to cache`
+      );
+    }
+
+    if (cacheHitCount > 0) {
+      const cacheHitRate = ((cacheHitCount / successCount) * 100).toFixed(1);
+      console.log(
+        `   ♻️  Cache hit rate: ${cacheHitRate}% (${cacheHitCount}/${successCount} products reused)`
+      );
+    } else {
+      console.log(
+        `   ⚠️  No cache hits - all products required new categorization`
+      );
+    }
 
     if (skippedCount > 0) {
       console.warn(
@@ -635,6 +818,11 @@ serve(async (req) => {
         totalProcessed: successCount,
         totalRequested: products.length,
         averageConfidence: avgConfidence,
+        cacheHitCount: cacheHitCount,
+        cacheHitRate:
+          successCount > 0
+            ? ((cacheHitCount / successCount) * 100).toFixed(1)
+            : 0,
         confidenceDistribution: {
           high: highConfidence,
           medium: mediumConfidence,

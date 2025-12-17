@@ -1,7 +1,13 @@
 import acesCategories from "../data/acesCategories.js";
 import { suggestCategory } from "./categoryMatcher.js";
+import {
+  fetchDatabaseCategories,
+  batchGetCachedClassifications,
+  batchSaveClassificationsToCache,
+} from "./classificationCache.js";
 
-const BATCH_SIZE = Number(process.env.REACT_APP_BATCH_SIZE) || 200;
+// Professional-grade batch configuration for optimal API performance
+const BATCH_SIZE = Number(process.env.REACT_APP_BATCH_SIZE) || 20; // Optimal: 20 products per API call
 const MAX_RETRIES = 4;
 const RETRY_DELAY_MS = 2000;
 const API_TIMEOUT_MS = 30000;
@@ -10,10 +16,10 @@ const PREFILTER_CONFIDENCE_THRESHOLD =
 const OPENAI_MODEL = process.env.REACT_APP_OPENAI_MODEL || "gpt-4o-mini";
 
 // Professional automotive parts categorization prompt with domain expertise
-const getAcesCategoriesPrompt = () => {
-  const mainCategories = Object.keys(acesCategories);
+const getAcesCategoriesPrompt = (categories = acesCategories) => {
+  const mainCategories = Object.keys(categories);
 
-  let prompt = "AUTOMOTIVE PARTS CATEGORIZATION REFERENCE - ACES STANDARD\n\n";
+  let prompt = "AUTOMOTIVE PARTS CATEGORIZATION REFERENCE\n\n";
 
   // Add automotive context and common part patterns
   prompt += "AUTOMOTIVE CATEGORIZATION RULES:\n";
@@ -33,9 +39,9 @@ const getAcesCategoriesPrompt = () => {
 
   mainCategories.forEach((category) => {
     prompt += `${category}:\n`;
-    const subcategories = Object.keys(acesCategories[category]);
+    const subcategories = Object.keys(categories[category]);
     subcategories.forEach((subcategory) => {
-      const partTypes = acesCategories[category][subcategory];
+      const partTypes = categories[category][subcategory];
       if (partTypes && partTypes.length > 0) {
         prompt += `  ▶ ${subcategory}: ${partTypes.join(", ")}\n`;
       }
@@ -718,18 +724,40 @@ const validateCategoryWithKeywords = (
 export const batchCategorizeWithOpenAI = async (
   products,
   progressCallback,
-  categories = acesCategories
+  categories = null
 ) => {
-  const isUsingCustomCategories = categories !== acesCategories;
+  // Fetch categories from database if not provided
+  let activeCategories = categories;
+  if (!activeCategories) {
+    console.log(
+      "[batchCategorizeWithOpenAI] Fetching categories from database..."
+    );
+    try {
+      activeCategories = await fetchDatabaseCategories();
+      console.log(
+        `[batchCategorizeWithOpenAI] Loaded ${
+          Object.keys(activeCategories).length
+        } categories from database`
+      );
+    } catch (error) {
+      console.warn(
+        "[batchCategorizeWithOpenAI] Failed to fetch DB categories, using ACES fallback:",
+        error
+      );
+      activeCategories = acesCategories;
+    }
+  }
+
+  const isUsingCustomCategories = activeCategories !== acesCategories;
   console.log("[batchCategorizeWithOpenAI] Starting AI categorization");
   console.log(
     `[batchCategorizeWithOpenAI] Using ${
-      isUsingCustomCategories ? "UPLOADED" : "DEFAULT ACES"
+      isUsingCustomCategories ? "DATABASE" : "DEFAULT ACES"
     } categories`
   );
   console.log(
     `[batchCategorizeWithOpenAI] Available categories: ${Object.keys(
-      categories
+      activeCategories
     ).join(", ")}`
   );
 
@@ -751,28 +779,70 @@ export const batchCategorizeWithOpenAI = async (
   console.info(`Batch size: ${BATCH_SIZE}`);
   console.info(`========================================\n`);
 
-  // 1) Deterministic prefilter - fast local matcher to reduce LLM calls
-  const prefilter = products.map((product) => {
-    const suggestion = suggestCategory(
-      product.name || "",
-      product.description || "",
-      product.brand || "",
-      product.title || "",
-      product.originalCategory || product.category || "",
-      categories
-    );
-    return { product, suggestion };
-  });
+  // 1) Check cache first
+  console.info("🔍 Checking cache for existing classifications...");
+  const cacheMap = await batchGetCachedClassifications(products);
+  console.info(`✅ Found ${cacheMap.size} cached classifications`);
 
+  // 2) Split into cached and needs-classification
+  const cached = [];
+  const needsClassification = [];
+
+  for (let idx = 0; idx < products.length; idx++) {
+    const product = products[idx];
+    const { generateProductHash } = await import("./classificationCache.js");
+    const productHash = await generateProductHash(
+      product.name,
+      product.description
+    );
+
+    const cachedResult = cacheMap.get(productHash);
+
+    // Only use cache if we have valid data with category
+    if (
+      cachedResult &&
+      typeof cachedResult === "object" &&
+      cachedResult.confidence >= 60 &&
+      cachedResult.category
+    ) {
+      const suggestionObj = {
+        category: cachedResult.category || "",
+        subcategory: cachedResult.subcategory || "",
+        partType: cachedResult.partType || "",
+        confidence: cachedResult.confidence || 0,
+        matchReasons: [cachedResult.validationReason || "Cached"],
+      };
+
+      console.log(
+        `✅ Using cached result for "${product.name}": ${suggestionObj.category}/${suggestionObj.subcategory}`
+      );
+
+      cached.push({
+        index: idx,
+        suggestion: suggestionObj,
+      });
+    } else {
+      if (cachedResult) {
+        console.log(
+          `⚠️ Invalid cache for "${product.name}": confidence=${
+            cachedResult.confidence
+          }, hasCategory=${!!cachedResult.category}`
+        );
+      }
+      needsClassification.push({ index: idx, product });
+    }
+  }
+
+  console.info(`📦 Using ${cached.length} cached results`);
   console.info(
-    "Bypassing deterministic prefilter: sending all products to OpenAI for classification"
+    `🤖 Need AI classification for ${needsClassification.length} products`
   );
 
-  const trusted = [];
-  const uncertain = prefilter.map((p, idx) => ({
-    index: idx,
-    product: p.product,
-    suggestion: p.suggestion,
+  const trusted = cached;
+  const uncertain = needsClassification.map((item, idx) => ({
+    index: item.index,
+    product: item.product,
+    suggestion: null,
   }));
 
   // 2) Build batches only for uncertain products
@@ -797,6 +867,12 @@ export const batchCategorizeWithOpenAI = async (
 
   // populate trusted results
   trusted.forEach((t) => {
+    // Add null safety check
+    if (!t || !t.suggestion) {
+      console.warn(`⚠️ Skipping invalid trusted result at index ${t?.index}`);
+      return;
+    }
+
     final[t.index].suggestedCategory = t.suggestion.category || "";
     final[t.index].suggestedSubcategory = t.suggestion.subcategory || "";
     final[t.index].suggestedPartType = t.suggestion.partType || "";
@@ -880,6 +956,23 @@ export const batchCategorizeWithOpenAI = async (
   }
   stats.timeMs = Date.now() - stats.startMs;
   console.info(`OpenAI categorization finished. stats=`, stats);
+
+  // Save new classifications to cache (async, don't wait)
+  const newClassifications = final.filter((p, idx) => {
+    // Only cache if it came from AI (not from cache)
+    const wasCached = cached.some((c) => c.index === idx);
+    return !wasCached && p.suggestedCategory && p.confidence >= 60;
+  });
+
+  if (newClassifications.length > 0) {
+    console.info(
+      `💾 Saving ${newClassifications.length} new classifications to cache...`
+    );
+    batchSaveClassificationsToCache(newClassifications).catch((err) => {
+      console.error("Failed to cache classifications:", err);
+    });
+  }
+
   return { results: final, stats };
 };
 
@@ -1044,7 +1137,7 @@ const processSingleBatch = async (
     .map((item) => `Product ${item.index + 1}:\n${item.productText}`)
     .join("\n\n---\n\n");
 
-  const acesPrompt = getAcesCategoriesPrompt();
+  const acesPrompt = getAcesCategoriesPrompt(categories);
 
   // Professional system prompt with automotive domain expertise
   const systemPrompt = `You are a professional automotive parts classification expert specializing in ACES (Aftermarket Catalog Exchange Standard) categorization.
@@ -1089,6 +1182,8 @@ Return ONLY a JSON array with exactly ${batch.length} objects. Each object MUST 
   const userPrompt = `Classify these automotive products using your professional expertise and the ACES categories provided:
 
 ${productsText}
+
+${acesPrompt}
 
 ANALYSIS APPROACH:
 1. Read the product name/title first - this is usually the most accurate identifier
@@ -1164,6 +1259,13 @@ Provide professional-grade classifications with JSON array only:`;
 
   const maxTokens = Math.min(16000, 800 + Math.ceil(batch.length * 40));
 
+  console.log(`\n🚀 ========================================`);
+  console.log(`🚀 MAKING SINGLE OPENAI API CALL`);
+  console.log(`🚀 Products in this batch: ${batch.length}`);
+  console.log(`🚀 Model: ${OPENAI_MODEL}`);
+  console.log(`🚀 Max tokens: ${maxTokens}`);
+  console.log(`🚀 ========================================\n`);
+
   const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -1224,6 +1326,13 @@ Provide professional-grade classifications with JSON array only:`;
   }
 
   const data = await response.json();
+
+  console.log(`\n✅ ========================================`);
+  console.log(`✅ OPENAI API CALL SUCCESSFUL`);
+  console.log(`✅ Tokens used: ${data.usage?.total_tokens || "N/A"}`);
+  console.log(`✅ Processing ${batch.length} products from single response`);
+  console.log(`✅ ========================================\n`);
+
   const content = data.choices[0]?.message?.content;
 
   if (!content) {

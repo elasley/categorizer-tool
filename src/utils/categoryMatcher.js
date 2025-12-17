@@ -1054,6 +1054,11 @@ const findKeywordMatches = (
   description = "",
   categories = acesCategories
 ) => {
+  // Ensure text is a string
+  if (typeof text !== "string") {
+    console.warn("findKeywordMatches received non-string text:", text);
+    text = String(text || "");
+  }
   const words = text.split(/\s+/).filter((w) => w.length > 2);
   let bestMatch = null;
   let bestScore = 0;

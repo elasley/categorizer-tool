@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useSelector } from "react-redux";
 import {
   Search,
   Plus,
@@ -10,12 +11,13 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { supabase } from "../../config/supabase";
-import { generateCategoryEmbedding } from "../../utils/embeddingUtils";
+import { generateEmbedding } from "../../utils/embeddingGenerator";
 import toast from "react-hot-toast";
 
 const BATCH_SIZE = 20;
 
 const ParttypesPage = () => {
+  const { user } = useSelector((state) => state.auth);
   const [parttypes, setParttypes] = useState([]);
   const [subcategories, setSubcategories] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -43,19 +45,43 @@ const ParttypesPage = () => {
     setLoading(true);
     try {
       // Fetch total count only
-      const countRes = await supabase
+      let countQuery = supabase
         .from("parttypes")
         .select("*", { count: "exact", head: true });
+
+      if (user?.id) {
+        countQuery = countQuery.eq("user_id", user.id);
+      }
+
+      const countRes = await countQuery;
       setTotalCount(countRes.count || 0);
 
+      let ptsQuery = supabase
+        .from("parttypes")
+        .select("*")
+        .order("name")
+        .range(0, BATCH_SIZE - 1);
+
+      if (user?.id) {
+        ptsQuery = ptsQuery.eq("user_id", user.id);
+      }
+
+      let subsQuery = supabase.from("subcategories").select("*").order("name");
+
+      if (user?.id) {
+        subsQuery = subsQuery.eq("user_id", user.id);
+      }
+
+      let catsQuery = supabase.from("categories").select("*").order("name");
+
+      if (user?.id) {
+        catsQuery = catsQuery.eq("user_id", user.id);
+      }
+
       const [ptsRes, subsRes, catsRes] = await Promise.all([
-        supabase
-          .from("parttypes")
-          .select("*")
-          .order("name")
-          .range(0, BATCH_SIZE - 1),
-        supabase.from("subcategories").select("*").order("name"),
-        supabase.from("categories").select("*").order("name"),
+        ptsQuery,
+        subsQuery,
+        catsQuery,
       ]);
 
       if (ptsRes.error) throw ptsRes.error;
@@ -80,11 +106,18 @@ const ParttypesPage = () => {
     try {
       const from = parttypes.length;
       const to = from + BATCH_SIZE - 1;
-      const { data, error } = await supabase
+
+      let query = supabase
         .from("parttypes")
         .select("*")
         .order("name")
         .range(from, to);
+
+      if (user?.id) {
+        query = query.eq("user_id", user.id);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -105,7 +138,9 @@ const ParttypesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading("Adding part type...");
+    const loadingToast = toast.loading(
+      "Generating AI embedding and adding part type..."
+    );
 
     try {
       const subcategory = subcategories.find(
@@ -115,16 +150,17 @@ const ParttypesPage = () => {
         (c) => c.id === subcategory?.category_id
       );
 
-      const embedding = generateCategoryEmbedding(
-        category?.name || "",
-        subcategory?.name || "",
+      // Generate AI-powered embedding using MiniLM-v2 model
+      const text = `${category?.name || ""} ${subcategory?.name || ""} ${
         formData.name
-      );
+      }`.trim();
+      const embedding = await generateEmbedding(text);
 
       const { error } = await supabase.from("parttypes").insert({
         name: formData.name,
         subcategory_id: formData.subcategoryId,
         embedding,
+        user_id: user?.id,
       });
 
       if (error) throw error;
@@ -148,7 +184,9 @@ const ParttypesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading("Updating part type...");
+    const loadingToast = toast.loading(
+      "Regenerating AI embedding and updating part type..."
+    );
 
     try {
       const subcategory = subcategories.find(
@@ -158,11 +196,11 @@ const ParttypesPage = () => {
         (c) => c.id === subcategory?.category_id
       );
 
-      const embedding = generateCategoryEmbedding(
-        category?.name || "",
-        subcategory?.name || "",
+      // Regenerate AI-powered embedding using MiniLM-v2 model
+      const text = `${category?.name || ""} ${subcategory?.name || ""} ${
         formData.name
-      );
+      }`.trim();
+      const embedding = await generateEmbedding(text);
 
       const { error } = await supabase
         .from("parttypes")

@@ -84,57 +84,30 @@ function App() {
             />
             <Route path="/verify-otp" element={<VerifyOtp />} />
 
-            {/* Protected Dashboard Routes */}
+            {/* Protected Routes - Using DashboardLayout as wrapper without /dashboard prefix */}
             <Route
-              path="/dashboard"
               element={
                 <PrivateRoute>
                   <DashboardLayout />
                 </PrivateRoute>
               }
             >
-              <Route index element={<DashboardHome />} />
+              <Route path="/dashboard" element={<DashboardHome />} />
               <Route
-                path="categorize"
+                path="/categorize"
                 element={<AcesPiesCategorizationTool />}
               />
-              {/* <Route
-                path="products"
-                element={
-                  <div className="bg-white rounded-xl shadow-md border border-gray-200 p-8">
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      My Products
-                    </h2>
-                    <p className="text-gray-600 mt-2">
-                      View and manage your products
-                    </p>
-                  </div>
-                }
-              /> */}
-              <Route path="reports" element={<ReportsPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
               <Route
-                path="products-view/:fileUrl"
+                path="/products-view/:fileUrl"
                 element={<ProductsViewPage />}
               />
-              {/* <Route
-                path="insights"
-                element={
-                  <div className="bg-white rounded-xl shadow-md border border-gray-200 p-8">
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      AI Insights
-                    </h2>
-                    <p className="text-gray-600 mt-2">
-                      AI-powered analytics and insights
-                    </p>
-                  </div>
-                }
-              /> */}
-              <Route path="categories" element={<Categories />} />
-              <Route path="categories-list" element={<CategoriesPage />} />
-              <Route path="subcategories" element={<SubcategoriesPage />} />
-              <Route path="parttypes" element={<ParttypesPage />} />
+              <Route path="/categories" element={<Categories />} />
+              <Route path="/categories-list" element={<CategoriesPage />} />
+              <Route path="/subcategories" element={<SubcategoriesPage />} />
+              <Route path="/parttypes" element={<ParttypesPage />} />
               <Route
-                path="export"
+                path="/export"
                 element={
                   <div className="bg-white rounded-xl shadow-md border border-gray-200 p-8">
                     <h2 className="text-2xl font-bold text-gray-900">
@@ -146,8 +119,8 @@ function App() {
                   </div>
                 }
               />
-              <Route path="settings" element={<Settings />} />
-              <Route path="profile" element={<Profile />} />/
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/profile" element={<Profile />} />
             </Route>
 
             {/* Catch all */}

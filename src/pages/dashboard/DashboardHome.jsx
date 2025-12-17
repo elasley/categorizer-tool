@@ -12,9 +12,11 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../config/supabase";
+import { useSelector } from "react-redux";
 
 const DashboardHome = () => {
   const navigate = useNavigate();
+  const { user } = useSelector((state) => state.auth);
 
   // Add state for counts
   const [categorizedCount, setCategorizedCount] = useState(0);
@@ -26,36 +28,43 @@ const DashboardHome = () => {
   useEffect(() => {
     // Fetch total categorized products
     const fetchCounts = async () => {
+      if (!user?.id) return;
+
       setLoadingStats(true);
       const { count: categorized, error: catErr } = await supabase
         .from("categories")
-        .select("*", { count: "exact", head: true });
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id);
       if (!catErr) setCategorizedCount(categorized || 0);
 
-      // Fetch total upload files
+      // Fetch total upload files for current user
       const { count: uploads, error: upErr } = await supabase
         .from("upload_history")
-        .select("*", { count: "exact", head: true });
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id);
       if (!upErr) setUploadFilesCount(uploads || 0);
       setLoadingStats(false);
     };
     fetchCounts();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
-    // Fetch latest 4 uploads for recent activity
+    // Fetch latest 4 uploads for current user
     const fetchRecentUploads = async () => {
+      if (!user?.id) return;
+
       setLoadingActivity(true);
       const { data, error } = await supabase
         .from("upload_history")
         .select("*")
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(4);
       if (!error) setRecentUploads(data || []);
       setLoadingActivity(false);
     };
     fetchRecentUploads();
-  }, []);
+  }, [user]);
 
   // Remove handleViewAllUploads async logic, just navigate
   const handleViewAllUploads = () => {

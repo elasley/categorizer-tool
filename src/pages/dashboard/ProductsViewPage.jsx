@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useSelector } from "react-redux";
 import { supabase } from "../../config/supabase";
 import {
   ArrowLeft,
@@ -29,6 +30,7 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 const ProductsViewPage = () => {
   const { fileUrl } = useParams();
   const navigate = useNavigate();
+  const { user } = useSelector((state) => state.auth);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -305,7 +307,8 @@ const ProductsViewPage = () => {
           parttype_id: parttype.id,
         })
         .eq("file_url", decodedUrl)
-        .eq("name", originalProductName);
+        .eq("name", originalProductName)
+        .eq("user_id", user?.id);
 
       if (updateError) throw updateError;
       console.log("✅ Database updated (1 API call)");

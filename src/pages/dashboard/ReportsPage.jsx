@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useSelector } from "react-redux";
 import { supabase } from "../../config/supabase";
 import {
   FileText,
@@ -34,6 +35,7 @@ const TableSkeleton = ({ rows = 8 }) => (
 
 const ReportsPage = () => {
   const navigate = useNavigate();
+  const { user } = useSelector((state) => state.auth);
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -63,6 +65,7 @@ const ReportsPage = () => {
         let query = supabase
           .from("upload_history")
           .select("*, products:products(count)", { count: "exact" })
+          .eq("user_id", user?.id)
           .order("created_at", { ascending: false });
 
         if (searchTerm) {
@@ -136,7 +139,8 @@ const ReportsPage = () => {
     if (search) return;
     const handleScroll = () => {
       if (loadingMore || !hasMore) return;
-      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      const scrollTop =
+        window.pageYOffset || document.documentElement.scrollTop;
       const scrollHeight = document.documentElement.scrollHeight;
       const clientHeight = document.documentElement.clientHeight;
       // If user is near the bottom, load more
@@ -191,7 +195,7 @@ const ReportsPage = () => {
   const viewFile = (fileUrl, fileName) => {
     // Navigate to the new products view page with the file URL
     const encodedUrl = encodeURIComponent(fileUrl);
-    navigate(`/dashboard/products-view/${encodedUrl}`);
+    navigate(`/products-view/${encodedUrl}`);
   };
 
   // Old view file function (keeping for reference)

@@ -281,59 +281,29 @@ export const exportToCSV = (
     return;
   }
 
-  const allHeaders = new Set();
-  products.forEach((product) => {
-    Object.keys(product).forEach((key) => allHeaders.add(key));
-  });
-
-  const priorityHeaders = [
-    "Master SKU",
-    "brand",
-    "MPN",
-    "title",
-    "Parent Title",
-    "description",
-    "Parent Description",
-    "UPC",
-    "Category 1",
-    "Category 2",
-    "Category 3",
-    "suggestedCategory",
-    "suggestedSubcategory",
-    "suggestedPartType",
-    "confidence",
-    "status",
-  ];
-
-  const finalHeaders = [];
-  priorityHeaders.forEach((header) => {
-    if (allHeaders.has(header)) {
-      finalHeaders.push(header);
-      allHeaders.delete(header);
-    }
-  });
-
-  Array.from(allHeaders)
-    .sort()
-    .forEach((header) => {
-      if (!["id", "matchReasons"].includes(header)) {
-        finalHeaders.push(header);
-      }
-    });
+  // Only export name and final categorization (rename suggestedX to final names)
+  const finalHeaders = ["name", "category", "subcategory", "parttype"];
 
   const csvContent = [
     finalHeaders.join(","),
     ...products.map((product) =>
       finalHeaders
         .map((header) => {
-          let value = product[header] || "";
+          let value = "";
+
+          // Map the suggested fields to the final export names
+          if (header === "name") {
+            value = product.title || product.name || "";
+          } else if (header === "category") {
+            value = product.suggestedCategory || "";
+          } else if (header === "subcategory") {
+            value = product.suggestedSubcategory || "";
+          } else if (header === "parttype") {
+            value = product.suggestedPartType || "";
+          }
 
           if (typeof value === "string" && value.trim()) {
             value = stripHtmlTags(value);
-          }
-
-          if (header === "confidence" && typeof value === "number") {
-            value = `${value}%`;
           }
 
           if (typeof value === "string") {
@@ -461,11 +431,17 @@ const convertToCategories = (rows) => {
   if (rows.length === 0) return {};
 
   const headers = rows[0].map((header) => header.toLowerCase().trim());
-  
+
   // Identify column indices
-  const categoryIdx = headers.findIndex(h => h.includes('category') && !h.includes('sub'));
-  const subcategoryIdx = headers.findIndex(h => h.includes('sub') || h.includes('secondary'));
-  const partTypeIdx = headers.findIndex(h => h.includes('part') || h.includes('type'));
+  const categoryIdx = headers.findIndex(
+    (h) => h.includes("category") && !h.includes("sub")
+  );
+  const subcategoryIdx = headers.findIndex(
+    (h) => h.includes("sub") || h.includes("secondary")
+  );
+  const partTypeIdx = headers.findIndex(
+    (h) => h.includes("part") || h.includes("type")
+  );
 
   if (categoryIdx === -1) {
     throw new Error("Could not identify 'Category' column");
@@ -473,7 +449,7 @@ const convertToCategories = (rows) => {
 
   const categories = {};
 
-  rows.slice(1).forEach(row => {
+  rows.slice(1).forEach((row) => {
     const category = row[categoryIdx];
     const subcategory = subcategoryIdx !== -1 ? row[subcategoryIdx] : null;
     const partType = partTypeIdx !== -1 ? row[partTypeIdx] : null;
@@ -506,8 +482,8 @@ export const validateCategoryCSV = (categories) => {
     stats: {
       totalCategories: Object.keys(categories).length,
       totalSubcategories: 0,
-      totalPartTypes: 0
-    }
+      totalPartTypes: 0,
+    },
   };
 
   if (Object.keys(categories).length === 0) {
@@ -516,9 +492,9 @@ export const validateCategoryCSV = (categories) => {
     return validation;
   }
 
-  Object.values(categories).forEach(subcats => {
+  Object.values(categories).forEach((subcats) => {
     validation.stats.totalSubcategories += Object.keys(subcats).length;
-    Object.values(subcats).forEach(partTypes => {
+    Object.values(subcats).forEach((partTypes) => {
       validation.stats.totalPartTypes += partTypes.length;
     });
   });

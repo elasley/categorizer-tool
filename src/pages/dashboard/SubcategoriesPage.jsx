@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useSelector } from "react-redux";
 import {
   Search,
   Plus,
@@ -10,12 +11,13 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { supabase } from "../../config/supabase";
-import { generateCategoryEmbedding } from "../../utils/embeddingUtils";
+import { generateEmbedding } from "../../utils/embeddingGenerator";
 import toast from "react-hot-toast";
 
 const BATCH_SIZE = 20;
 
 const SubcategoriesPage = () => {
+  const { user } = useSelector((state) => state.auth);
   const [subcategories, setSubcategories] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -42,19 +44,34 @@ const SubcategoriesPage = () => {
     setLoading(true);
     try {
       // Get total count only
-      const countRes = await supabase
+      let countQuery = supabase
         .from("subcategories")
         .select("*", { count: "exact", head: true });
+
+      if (user?.id) {
+        countQuery = countQuery.eq("user_id", user.id);
+      }
+
+      const countRes = await countQuery;
       setTotalCount(countRes.count || 0);
 
-      const [subsRes, catsRes] = await Promise.all([
-        supabase
-          .from("subcategories")
-          .select("*")
-          .order("name")
-          .range(0, BATCH_SIZE - 1),
-        supabase.from("categories").select("*").order("name"),
-      ]);
+      let subsQuery = supabase
+        .from("subcategories")
+        .select("*")
+        .order("name")
+        .range(0, BATCH_SIZE - 1);
+
+      if (user?.id) {
+        subsQuery = subsQuery.eq("user_id", user.id);
+      }
+
+      let catsQuery = supabase.from("categories").select("*").order("name");
+
+      if (user?.id) {
+        catsQuery = catsQuery.eq("user_id", user.id);
+      }
+
+      const [subsRes, catsRes] = await Promise.all([subsQuery, catsQuery]);
 
       if (subsRes.error) throw subsRes.error;
       if (catsRes.error) throw catsRes.error;
@@ -76,11 +93,18 @@ const SubcategoriesPage = () => {
     try {
       const from = subcategories.length;
       const to = from + BATCH_SIZE - 1;
-      const { data, error } = await supabase
+
+      let query = supabase
         .from("subcategories")
         .select("*")
         .order("name")
         .range(from, to);
+
+      if (user?.id) {
+        query = query.eq("user_id", user.id);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -107,20 +131,21 @@ const SubcategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading("Adding subcategory...");
+    const loadingToast = toast.loading(
+      "Generating AI embedding and adding subcategory..."
+    );
 
     try {
       const category = categories.find((c) => c.id === formData.categoryId);
-      const embedding = generateCategoryEmbedding(
-        category?.name || "",
-        formData.name,
-        ""
-      );
+      // Generate AI-powered embedding using MiniLM-v2 model
+      const text = `${category?.name || ""} ${formData.name}`.trim();
+      const embedding = await generateEmbedding(text);
 
       const { error } = await supabase.from("subcategories").insert({
         name: formData.name,
         category_id: formData.categoryId,
         embedding,
+        user_id: user?.id,
       });
 
       if (error) throw error;
@@ -144,15 +169,15 @@ const SubcategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading("Updating subcategory...");
+    const loadingToast = toast.loading(
+      "Regenerating AI embedding and updating subcategory..."
+    );
 
     try {
       const category = categories.find((c) => c.id === formData.categoryId);
-      const embedding = generateCategoryEmbedding(
-        category?.name || "",
-        formData.name,
-        ""
-      );
+      // Regenerate AI-powered embedding using MiniLM-v2 model
+      const text = `${category?.name || ""} ${formData.name}`.trim();
+      const embedding = await generateEmbedding(text);
 
       const { error } = await supabase
         .from("subcategories")

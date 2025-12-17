@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useSelector } from "react-redux";
 import toast from "react-hot-toast";
 import { supabase } from "../../config/supabase";
+import { generateEmbedding } from "../../utils/embeddingGenerator";
 import {
   Upload,
   Download,
@@ -83,29 +84,40 @@ const Categories = () => {
           setAdding(false);
           return;
         }
-        // Add category
+        // Add category with AI embedding
+        const categoryEmbedding = await generateEmbedding(newCategory.trim());
         const { data: cat, error: catErr } = await supabase
           .from("categories")
-          .insert({ name: newCategory.trim() })
+          .insert({ name: newCategory.trim(), embedding: categoryEmbedding })
           .select()
           .single();
         if (catErr) throw catErr;
         let subcatId = null;
         if (newSubcategory.trim()) {
-          // Add subcategory
+          // Add subcategory with AI embedding
+          const subcategoryText = `${newCategory.trim()} ${newSubcategory.trim()}`;
+          const subcategoryEmbedding = await generateEmbedding(subcategoryText);
           const { data: subcat, error: subcatErr } = await supabase
             .from("subcategories")
-            .insert({ name: newSubcategory.trim(), category_id: cat.id })
+            .insert({
+              name: newSubcategory.trim(),
+              category_id: cat.id,
+              embedding: subcategoryEmbedding,
+            })
             .select()
             .single();
           if (subcatErr) throw subcatErr;
           subcatId = subcat.id;
         }
         if (newPartType.trim() && subcatId) {
-          // Add part type
-          const { error: ptErr } = await supabase
-            .from("parttypes")
-            .insert({ name: newPartType.trim(), subcategory_id: subcatId });
+          // Add part type with AI embedding
+          const partTypeText = `${newCategory.trim()} ${newSubcategory.trim()} ${newPartType.trim()}`;
+          const partTypeEmbedding = await generateEmbedding(partTypeText);
+          const { error: ptErr } = await supabase.from("parttypes").insert({
+            name: newPartType.trim(),
+            subcategory_id: subcatId,
+            embedding: partTypeEmbedding,
+          });
           if (ptErr) throw ptErr;
         }
         toast.success("Category and related items added");
@@ -115,9 +127,16 @@ const Categories = () => {
           setAdding(false);
           return;
         }
+        // Find parent category name for embedding
+        const category = categories.find((c) => c.id === parentCategoryId);
+        const subcategoryText = `${
+          category?.name || ""
+        } ${newSubcategory.trim()}`;
+        const embedding = await generateEmbedding(subcategoryText);
         const { error } = await supabase.from("subcategories").insert({
           name: newSubcategory.trim(),
           category_id: parentCategoryId,
+          embedding,
         });
         if (error) throw error;
         toast.success("Subcategory added");
@@ -127,9 +146,21 @@ const Categories = () => {
           setAdding(false);
           return;
         }
+        // Find parent subcategory and category names for embedding
+        const subcategory = subcategories.find(
+          (s) => s.id === parentSubcategoryId
+        );
+        const category = categories.find(
+          (c) => c.id === subcategory?.category_id
+        );
+        const partTypeText = `${category?.name || ""} ${
+          subcategory?.name || ""
+        } ${newPartType.trim()}`;
+        const embedding = await generateEmbedding(partTypeText);
         const { error } = await supabase.from("parttypes").insert({
           name: newPartType.trim(),
           subcategory_id: parentSubcategoryId,
+          embedding,
         });
         if (error) throw error;
         toast.success("Part type added");
@@ -910,7 +941,7 @@ const Categories = () => {
                         </label>
                         <input
                           type="text"
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           value={newCategory}
                           onChange={(e) => setNewCategory(e.target.value)}
                           placeholder="Enter categories name"
@@ -923,7 +954,7 @@ const Categories = () => {
                         </label>
                         <input
                           type="text"
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                           value={newSubcategory}
                           onChange={(e) => setNewSubcategory(e.target.value)}
                           placeholder="Enter subcategories name"
@@ -935,7 +966,7 @@ const Categories = () => {
                         </label>
                         <input
                           type="text"
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                           value={newPartType}
                           onChange={(e) => setNewPartType(e.target.value)}
                           placeholder="Enter part type"
@@ -951,7 +982,7 @@ const Categories = () => {
                       </label>
                       <input
                         type="text"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                         value={newSubcategory}
                         onChange={(e) => setNewSubcategory(e.target.value)}
                         placeholder="Enter subcategory name"
@@ -966,7 +997,7 @@ const Categories = () => {
                       </label>
                       <input
                         type="text"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                         value={newPartType}
                         onChange={(e) => setNewPartType(e.target.value)}
                         placeholder="Enter part type name"

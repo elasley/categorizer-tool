@@ -32,13 +32,15 @@ import AdvancedSettings from "./AdvancedSettings";
 import TaxonomyManager from "./TaxonomyManager";
 import BulkAssignmentTool from "./BulkAssignmentTool";
 import UploadToSupabaseModal from "./UploadToSupabaseModal";
-import { generateProductEmbeddings } from "../utils/embeddingGenerator";
 
 import { parseCSV, validateCSV, exportToCSV } from "../utils/csvParser";
 import { parseCategoryCSV, validateCategoryCSV } from "../utils/csvParser";
 import { acesCategories } from "../data/acesCategories";
 import { supabase } from "../config/supabase";
-import { generateCategoryEmbedding } from "../utils/embeddingUtils";
+import {
+  generateEmbedding,
+  generateProductEmbeddings,
+} from "../utils/embeddingGenerator";
 import { batchCategorizeWithOpenAI } from "../utils/openaiCategorizer";
 import toast from "react-hot-toast";
 import {
@@ -219,6 +221,12 @@ const AcesPiesCategorizationTool = () => {
         console.log(`✓ Existing category: ${cat.name} (ID: ${cat.id})`);
       });
 
+      // Get current user
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const userId = user?.id || null;
+
       // Prepare new categories with embeddings
       const newCategories = uniqueCategories.filter(
         (name) => !categoryMap.has(name)
@@ -232,17 +240,18 @@ const AcesPiesCategorizationTool = () => {
           { id: loadingToast }
         );
 
-        const categoriesWithEmbeddings = newCategories.map((categoryName) => {
-          console.log(`\n📁 New Category: ${categoryName}`);
-          const embedding = generateCategoryEmbedding(
-            categoryName,
-            "",
-            "",
-            true
-          );
-          const embeddingStr = `[${embedding.join(",")}]`;
-          return { name: categoryName, embedding: embeddingStr };
-        });
+        const categoriesWithEmbeddings = await Promise.all(
+          newCategories.map(async (categoryName) => {
+            console.log(`\n📁 New Category: ${categoryName}`);
+            const embedding = await generateEmbedding(categoryName);
+            const embeddingStr = `[${embedding.join(",")}]`;
+            return {
+              name: categoryName,
+              embedding: embeddingStr,
+              user_id: userId,
+            };
+          })
+        );
 
         const { data, error: catError } = await supabase
           .from("categories")
@@ -319,18 +328,15 @@ const AcesPiesCategorizationTool = () => {
             // Only add if it doesn't exist
             if (!subcategoryMap.has(subKey)) {
               console.log(`\n📂 New: ${categoryName} > ${subcategoryName}`);
-              const embedding = generateCategoryEmbedding(
-                categoryName,
-                subcategoryName,
-                "",
-                true
-              );
+              const text = `${categoryName} ${subcategoryName}`.trim();
+              const embedding = await generateEmbedding(text);
               const embeddingStr = `[${embedding.join(",")}]`;
 
               subcategoriesWithEmbeddings.push({
                 category_id: categoryId,
                 name: subcategoryName,
                 embedding: embeddingStr,
+                user_id: userId,
               });
             }
           }
@@ -427,18 +433,16 @@ const AcesPiesCategorizationTool = () => {
                   console.log(
                     `\n🏷️  New: ${categoryName} > ${subcategoryName} > ${partTypeName}`
                   );
-                  const embedding = generateCategoryEmbedding(
-                    categoryName,
-                    subcategoryName,
-                    partTypeName,
-                    true
-                  );
+                  const text =
+                    `${categoryName} ${subcategoryName} ${partTypeName}`.trim();
+                  const embedding = await generateEmbedding(text);
                   const embeddingStr = `[${embedding.join(",")}]`;
 
                   parttypesWithEmbeddings.push({
                     subcategory_id: subcategoryId,
                     name: partTypeName,
                     embedding: embeddingStr,
+                    user_id: userId,
                   });
                 }
               }
@@ -532,6 +536,28 @@ const AcesPiesCategorizationTool = () => {
   };
 
   // Upload products to Supabase with file storage
+  // Helper function to find closest matching category/subcategory/parttype
+  const findClosestMatch = (searchTerm, availableOptions) => {
+    if (!searchTerm) return null;
+    const searchLower = searchTerm.toLowerCase().trim();
+
+    // Exact match
+    const exactMatch = availableOptions.find(
+      (opt) => opt.toLowerCase() === searchLower
+    );
+    if (exactMatch) return exactMatch;
+
+    // Partial match (contains)
+    const partialMatch = availableOptions.find(
+      (opt) =>
+        opt.toLowerCase().includes(searchLower) ||
+        searchLower.includes(opt.toLowerCase())
+    );
+    if (partialMatch) return partialMatch;
+
+    return null;
+  };
+
   const uploadProductsToSupabase = async (uploadMetadata) => {
     if (!products || products.length === 0) {
       toast.error("No products to upload");
@@ -643,7 +669,7 @@ const AcesPiesCategorizationTool = () => {
         throw new Error("Failed to load category mappings");
       }
 
-      // Create lookup maps for O(1) access
+      // Create lookup maps with both exact and fuzzy matching capabilities
       const categoryMap = new Map(
         categoriesResult.data.map((c) => [c.name.toLowerCase(), c])
       );
@@ -659,6 +685,23 @@ const AcesPiesCategorizationTool = () => {
           p,
         ])
       );
+
+      // Create arrays for fuzzy matching
+      const allCategoryNames = categoriesResult.data.map((c) => c.name);
+      const subcategoriesByCategory = {};
+      subcategoriesResult.data.forEach((s) => {
+        if (!subcategoriesByCategory[s.category_id]) {
+          subcategoriesByCategory[s.category_id] = [];
+        }
+        subcategoriesByCategory[s.category_id].push(s.name);
+      });
+      const parttypesBySubcategory = {};
+      parttypesResult.data.forEach((p) => {
+        if (!parttypesBySubcategory[p.subcategory_id]) {
+          parttypesBySubcategory[p.subcategory_id] = [];
+        }
+        parttypesBySubcategory[p.subcategory_id].push(p.name);
+      });
 
       console.log(
         `✅ Loaded ${categoryMap.size} categories, ${subcategoryMap.size} subcategories, ${parttypeMap.size} parttypes`
@@ -687,11 +730,16 @@ const AcesPiesCategorizationTool = () => {
         }
 
         // Generate embedding for product
-        const embedding = generateCategoryEmbedding(
-          productName,
-          product.description || "",
-          ""
-        );
+        const text = `${productName} ${product.description || ""}`.trim();
+        // Ensure text is a string
+        if (typeof text !== "string" || !text) {
+          console.warn(`Invalid text for embedding: ${productName}`);
+          errorCount++;
+          errors.push(`Invalid product data: ${productName}`);
+          continue;
+        }
+        const embedding = await generateEmbedding(text);
+        const embeddingStr = `[${embedding.join(",")}]`;
 
         // Find category, subcategory, and parttype IDs using maps (O(1) lookups)
         const categoryName = (
@@ -710,34 +758,131 @@ const AcesPiesCategorizationTool = () => {
           ""
         ).toLowerCase();
 
-        const category = categoryMap.get(categoryName);
-        if (!category) {
-          const errorMsg = `Category not found: "${categoryName}" for product: ${productName}`;
-          console.error(errorMsg);
-          errors.push(errorMsg);
-          errorCount++;
-          continue;
+        // Try exact match first, then fuzzy match
+        let category = categoryMap.get(categoryName);
+        let actualCategoryName = categoryName;
+
+        if (!category && categoryName) {
+          // Try fuzzy matching
+          const closestCategory = findClosestMatch(
+            categoryName,
+            allCategoryNames
+          );
+          if (closestCategory) {
+            category = categoryMap.get(closestCategory.toLowerCase());
+            actualCategoryName = closestCategory;
+            console.warn(
+              `📝 Category fuzzy matched: "${categoryName}" → "${closestCategory}" for product: ${productName}`
+            );
+          }
         }
 
-        const subcategory = subcategoryMap.get(
+        if (!category) {
+          // Fallback to first category to prevent upload failure
+          category = categoriesResult.data[0];
+          actualCategoryName = category.name;
+          console.warn(
+            `⚠️ Category not found: "${categoryName}". Using fallback "${actualCategoryName}" for product: ${productName}`
+          );
+          errors.push(
+            `Category auto-corrected: "${categoryName}" → "${actualCategoryName}" for ${productName}`
+          );
+        }
+
+        // Try exact match first, then fuzzy match
+        let subcategory = subcategoryMap.get(
           `${category.id}|${subcategoryName}`
         );
-        if (!subcategory) {
-          const errorMsg = `Subcategory not found: "${subcategoryName}" in "${categoryName}" for product: ${productName}`;
-          console.error(errorMsg);
-          errors.push(errorMsg);
-          errorCount++;
-          continue;
+        let actualSubcategoryName = subcategoryName;
+
+        if (!subcategory && subcategoryName) {
+          // Try fuzzy matching within this category
+          const availableSubcats = subcategoriesByCategory[category.id] || [];
+          const closestSubcategory = findClosestMatch(
+            subcategoryName,
+            availableSubcats
+          );
+          if (closestSubcategory) {
+            subcategory = subcategoryMap.get(
+              `${category.id}|${closestSubcategory.toLowerCase()}`
+            );
+            actualSubcategoryName = closestSubcategory;
+            console.warn(
+              `📝 Subcategory fuzzy matched: "${subcategoryName}" → "${closestSubcategory}" in "${actualCategoryName}" for product: ${productName}`
+            );
+          }
         }
 
-        const parttype = parttypeMap.get(`${subcategory.id}|${parttypeName}`);
-        if (!parttype) {
-          const errorMsg = `Parttype not found: "${parttypeName}" in "${subcategoryName}" for product: ${productName}`;
-          console.error(errorMsg);
-          errors.push(errorMsg);
-          errorCount++;
-          continue;
+        if (!subcategory) {
+          // Fallback to first subcategory in this category
+          const availableSubcats = subcategoriesResult.data.filter(
+            (s) => s.category_id === category.id
+          );
+          if (availableSubcats.length > 0) {
+            subcategory = availableSubcats[0];
+            actualSubcategoryName = subcategory.name;
+            console.warn(
+              `⚠️ Subcategory not found: "${subcategoryName}" in "${actualCategoryName}". Using fallback "${actualSubcategoryName}" for product: ${productName}`
+            );
+            errors.push(
+              `Subcategory auto-corrected: "${subcategoryName}" → "${actualSubcategoryName}" for ${productName}`
+            );
+          } else {
+            const errorMsg = `No subcategories available in "${actualCategoryName}" for product: ${productName}`;
+            console.error(errorMsg);
+            errors.push(errorMsg);
+            errorCount++;
+            continue;
+          }
         }
+
+        // Try exact match first, then fuzzy match
+        let parttype = parttypeMap.get(`${subcategory.id}|${parttypeName}`);
+        let actualParttypeName = parttypeName;
+
+        if (!parttype && parttypeName) {
+          // Try fuzzy matching within this subcategory
+          const availableParttypes =
+            parttypesBySubcategory[subcategory.id] || [];
+          const closestParttype = findClosestMatch(
+            parttypeName,
+            availableParttypes
+          );
+          if (closestParttype) {
+            parttype = parttypeMap.get(
+              `${subcategory.id}|${closestParttype.toLowerCase()}`
+            );
+            actualParttypeName = closestParttype;
+            console.warn(
+              `📝 Parttype fuzzy matched: "${parttypeName}" → "${closestParttype}" in "${actualSubcategoryName}" for product: ${productName}`
+            );
+          }
+        }
+
+        if (!parttype) {
+          // Fallback to first parttype in this subcategory
+          const availableParttypes = parttypesResult.data.filter(
+            (p) => p.subcategory_id === subcategory.id
+          );
+          if (availableParttypes.length > 0) {
+            parttype = availableParttypes[0];
+            actualParttypeName = parttype.name;
+            console.warn(
+              `⚠️ Parttype not found: "${parttypeName}" in "${actualSubcategoryName}". Using fallback "${actualParttypeName}" for product: ${productName}`
+            );
+            errors.push(
+              `Parttype auto-corrected: "${parttypeName}" → "${actualParttypeName}" for ${productName}`
+            );
+          } else {
+            const errorMsg = `No parttypes available in "${actualSubcategoryName}" for product: ${productName}`;
+            console.error(errorMsg);
+            errors.push(errorMsg);
+            errorCount++;
+            continue;
+          }
+        }
+
+        const userId = user?.id || null;
 
         productsToInsert.push({
           name: productName,
@@ -748,7 +893,8 @@ const AcesPiesCategorizationTool = () => {
           parttype_id: parttype.id,
           upload_history_id: uploadHistoryId,
           file_url: fileUrl,
-          embedding,
+          embedding: embeddingStr,
+          user_id: userId,
         });
       }
 
@@ -794,12 +940,28 @@ const AcesPiesCategorizationTool = () => {
       }
 
       if (successCount > 0) {
+        const autoCorrections = errors.filter((e) =>
+          e.includes("auto-corrected")
+        );
+        const realErrors = errors.filter((e) => !e.includes("auto-corrected"));
+
         toast.success(
-          `✅ Successfully uploaded ${successCount} products!${
+          ` Successfully uploaded ${successCount} products!${
             errorCount > 0 ? ` (${errorCount} failed)` : ""
           }`,
           { id: loadingToast, duration: 5000 }
         );
+
+        // Show warning about auto-corrections
+        if (autoCorrections.length > 0) {
+          const sampleCorrections = autoCorrections.slice(0, 3).join("\n");
+          const moreCount =
+            autoCorrections.length > 3
+              ? ` (+${autoCorrections.length - 3} more)`
+              : "";
+
+          console.log("All auto-corrections:", autoCorrections);
+        }
 
         // Keep file info visible after successful upload
         // Only clear the ready-for-upload flag and products data
@@ -1157,6 +1319,84 @@ const AcesPiesCategorizationTool = () => {
       toast.error(`Failed: ${error.message}`, { id: loadingToast });
     }
   };
+
+  // Fetch categories from database on component mount
+  React.useEffect(() => {
+    const fetchCategoriesFromDatabase = async () => {
+      try {
+        console.log("🔄 Fetching categories from database...");
+
+        const { data: categoriesData, error: categoriesError } = await supabase
+          .from("categories")
+          .select("id, name");
+
+        if (categoriesError) {
+          console.error("Error fetching categories:", categoriesError);
+          return;
+        }
+
+        if (!categoriesData || categoriesData.length === 0) {
+          console.log(
+            "No categories found in database, using default ACES categories"
+          );
+          return;
+        }
+
+        // Fetch subcategories and parttypes for all categories
+        const { data: subcategoriesData, error: subcategoriesError } =
+          await supabase.from("subcategories").select("id, name, category_id");
+
+        const { data: parttypesData, error: parttypesError } = await supabase
+          .from("parttypes")
+          .select("id, name, subcategory_id");
+
+        if (subcategoriesError || parttypesError) {
+          console.error("Error fetching subcategories/parttypes:", {
+            subcategoriesError,
+            parttypesError,
+          });
+          return;
+        }
+
+        // Build category structure
+        const dbCategories = {};
+
+        categoriesData.forEach((cat) => {
+          dbCategories[cat.name] = {};
+
+          // Find subcategories for this category
+          const categorySubcategories = subcategoriesData.filter(
+            (sub) => sub.category_id === cat.id
+          );
+
+          categorySubcategories.forEach((sub) => {
+            // Find parttypes for this subcategory
+            const subcategoryParttypes = parttypesData
+              .filter((pt) => pt.subcategory_id === sub.id)
+              .map((pt) => pt.name);
+
+            dbCategories[cat.name][sub.name] = subcategoryParttypes;
+          });
+        });
+
+        console.log(
+          `✅ Loaded ${
+            Object.keys(dbCategories).length
+          } categories from database`
+        );
+
+        // Update Redux with database categories
+        dispatch(setReduxUserCategories(dbCategories));
+        dispatch(setReduxCategories(dbCategories));
+        dispatch(setReduxCustomCategoriesUploaded(true));
+        dispatch(setReduxActiveCategories("user"));
+      } catch (error) {
+        console.error("Error in fetchCategoriesFromDatabase:", error);
+      }
+    };
+
+    fetchCategoriesFromDatabase();
+  }, []); // Run once on mount
 
   // Reset uploadingCategories on component mount in case it was stuck from previous session
   React.useEffect(() => {
@@ -1661,7 +1901,7 @@ const AcesPiesCategorizationTool = () => {
                   {uploadingCategories ? (
                     <>
                       <span className="animate-spin text-xl">⏳</span>
-                      <span>Uploading to Supabase...</span>
+                      <span>Permanently Saving...</span>
                     </>
                   ) : (
                     <>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useSelector } from "react-redux";
 import {
   Search,
   Plus,
@@ -10,10 +11,11 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { supabase } from "../../config/supabase";
-import { generateCategoryEmbedding } from "../../utils/embeddingUtils";
+import { generateEmbedding } from "../../utils/embeddingGenerator";
 import toast from "react-hot-toast";
 
 const CategoriesPage = () => {
+  const { user } = useSelector((state) => state.auth);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -53,6 +55,10 @@ const CategoriesPage = () => {
         .select("*", { count: "exact" })
         .order("name")
         .range(from, to);
+
+      if (user?.id) {
+        query = query.eq("user_id", user.id);
+      }
 
       if (searchTerm.trim() !== "") {
         query = query.ilike("name", `%${searchTerm}%`);
@@ -113,13 +119,16 @@ const CategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading("Adding category...");
+    const loadingToast = toast.loading(
+      "Generating AI embedding and adding category..."
+    );
 
     try {
-      const embedding = generateCategoryEmbedding(formData.name, "", "");
+      // Generate AI-powered embedding using MiniLM-v2 model
+      const embedding = await generateEmbedding(formData.name);
       const { error } = await supabase
         .from("categories")
-        .insert({ name: formData.name, embedding });
+        .insert({ name: formData.name, embedding, user_id: user?.id });
 
       if (error) throw error;
 
@@ -142,10 +151,13 @@ const CategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading("Updating category...");
+    const loadingToast = toast.loading(
+      "Regenerating AI embedding and updating category..."
+    );
 
     try {
-      const embedding = generateCategoryEmbedding(formData.name, "", "");
+      // Regenerate AI-powered embedding using MiniLM-v2 model
+      const embedding = await generateEmbedding(formData.name);
       const { error } = await supabase
         .from("categories")
         .update({ name: formData.name, embedding })
