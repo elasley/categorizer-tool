@@ -23,36 +23,56 @@ const CategoriesPage = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({ name: "" });
-  const [page, setPage] = useState(1); // <-- add page state
-  const [totalCount, setTotalCount] = useState(0); // <-- total count for pagination
+  const [totalCount, setTotalCount] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteItem, setDeleteItem] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
   const observerTarget = React.useRef(null);
+  const hasLoadedRef = React.useRef(false);
 
-  const PAGE_SIZE = 20;
+  const BATCH_SIZE = 20;
 
-  useEffect(() => {
-    setCategories([]);
-    setPage(1);
-    loadCategories(1, true);
-    // eslint-disable-next-line
-  }, [searchTerm]);
-
-  // Fetch categories with pagination
-  const loadCategories = async (pageToLoad = 1, reset = false) => {
-    if (reset) setLoading(true);
-    else setLoadingMore(true);
-
+  const loadInitialData = async () => {
+    setLoading(true);
     try {
-      const from = (pageToLoad - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-
       let query = supabase
         .from("categories")
         .select("*", { count: "exact" })
+        .order("name")
+        .range(0, BATCH_SIZE - 1);
+
+      if (user?.id) {
+        query = query.eq("user_id", user.id);
+      }
+
+      const { data, error, count } = await query;
+
+      if (error) throw error;
+
+      setCategories(data || []);
+      setTotalCount(count || 0);
+      setHasMore((data?.length || 0) === BATCH_SIZE);
+    } catch (error) {
+      console.error("Error loading categories:", error);
+      toast.error("Failed to load categories");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchMoreCategories = async () => {
+    setLoadingMore(true);
+    try {
+      const from = categories.length;
+      const to = from + BATCH_SIZE - 1;
+
+      let query = supabase
+        .from("categories")
+        .select("*")
         .order("name")
         .range(from, to);
 
@@ -60,34 +80,87 @@ const CategoriesPage = () => {
         query = query.eq("user_id", user.id);
       }
 
-      if (searchTerm.trim() !== "") {
-        query = query.ilike("name", `%${searchTerm}%`);
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      setCategories((prev) => [...prev, ...(data || [])]);
+      setHasMore((data?.length || 0) === BATCH_SIZE);
+    } catch (error) {
+      toast.error("Failed to load more categories");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // Load initial data once
+  useEffect(() => {
+    if (!user?.id || hasLoadedRef.current) return;
+    hasLoadedRef.current = true;
+    loadInitialData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Debounced search
+  useEffect(() => {
+    if (!user?.id) return;
+
+    if (searchTerm.trim() === "") {
+      if (isSearching) {
+        setIsSearching(false);
+        hasLoadedRef.current = false;
+        loadInitialData();
+      }
+      return;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(() => {
+      performSearch();
+    }, 500);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, user?.id]);
+
+  const performSearch = async () => {
+    setLoading(true);
+    try {
+      let query = supabase
+        .from("categories")
+        .select("*", { count: "exact" })
+        .order("name")
+        .range(0, BATCH_SIZE - 1)
+        .ilike("name", `%${searchTerm}%`);
+
+      if (user?.id) {
+        query = query.eq("user_id", user.id);
       }
 
       const { data, error, count } = await query;
 
       if (error) throw error;
 
-      setCategories((prev) =>
-        reset ? data || [] : [...prev, ...(data || [])]
+      setCategories(data || []);
+      setTotalCount(count || 0);
+      setHasMore(
+        (data?.length || 0) === BATCH_SIZE && (data?.length || 0) < (count || 0)
       );
-      if (typeof count === "number") setTotalCount(count);
     } catch (error) {
-      console.error("Error loading categories:", error);
-      toast.error("Failed to load categories");
+      toast.error("Failed to search categories");
     } finally {
-      if (reset) setLoading(false);
-      else setLoadingMore(false);
+      setLoading(false);
     }
   };
 
   // Infinite scroll observer
   useEffect(() => {
-    if (loading || loadingMore) return;
+    if (!hasMore || loading || loadingMore || isSearching) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && categories.length < totalCount) {
-          setPage((prev) => prev + 1);
+        if (entries[0].isIntersecting) {
+          fetchMoreCategories();
         }
       },
       { threshold: 1.0 }
@@ -102,15 +175,8 @@ const CategoriesPage = () => {
         observer.unobserve(observerTarget.current);
       }
     };
-    // eslint-disable-next-line
-  }, [categories, totalCount, loading, loadingMore]);
-
-  // Fetch next page when page changes (but not on first load)
-  useEffect(() => {
-    if (page === 1) return;
-    loadCategories(page, false);
-    // eslint-disable-next-line
-  }, [page]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, loading, loadingMore, isSearching]);
 
   const handleAdd = async () => {
     if (!formData.name.trim()) {
@@ -135,7 +201,8 @@ const CategoriesPage = () => {
       toast.success("Category added successfully!", { id: loadingToast });
       setShowAddModal(false);
       setFormData({ name: "" });
-      loadCategories();
+      hasLoadedRef.current = false;
+      loadInitialData();
     } catch (error) {
       console.error("Error adding category:", error);
       toast.error(`Failed to add: ${error.message}`, { id: loadingToast });
@@ -167,7 +234,8 @@ const CategoriesPage = () => {
 
       toast.success("Category updated successfully!", { id: loadingToast });
       setShowEditModal(false);
-      loadCategories();
+      hasLoadedRef.current = false;
+      loadInitialData();
     } catch (error) {
       console.error("Error updating category:", error);
       toast.error(`Failed to update: ${error.message}`, { id: loadingToast });
@@ -193,7 +261,8 @@ const CategoriesPage = () => {
       toast.success("Category deleted successfully!", { id: loadingToast });
       setShowDeleteModal(false);
       setDeleteItem(null);
-      loadCategories();
+      hasLoadedRef.current = false;
+      loadInitialData();
     } catch (error) {
       console.error("Error deleting:", error);
       toast.error(`Failed to delete: ${error.message}`, { id: loadingToast });

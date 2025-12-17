@@ -19,14 +19,12 @@ const BATCH_SIZE = 20;
 const SubcategoriesPage = () => {
   const { user } = useSelector((state) => state.auth);
   const [subcategories, setSubcategories] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({ name: "", categoryId: "" });
-  const [displayCount, setDisplayCount] = useState(20);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -34,52 +32,48 @@ const SubcategoriesPage = () => {
   const [deleting, setDeleting] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
+  const [isSearching, setIsSearching] = useState(false);
   const observerTarget = React.useRef(null);
+  const hasLoadedRef = React.useRef(false);
 
   useEffect(() => {
+    // Prevent double loading in React StrictMode
+    if (hasLoadedRef.current) return;
+    hasLoadedRef.current = true;
     loadInitialData();
+    // eslint-disable-next-line
   }, []);
 
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      // Get total count only
-      let countQuery = supabase
+      // Single API call with joins to fetch subcategories with category data
+      let query = supabase
         .from("subcategories")
-        .select("*", { count: "exact", head: true });
-
-      if (user?.id) {
-        countQuery = countQuery.eq("user_id", user.id);
-      }
-
-      const countRes = await countQuery;
-      setTotalCount(countRes.count || 0);
-
-      let subsQuery = supabase
-        .from("subcategories")
-        .select("*")
+        .select(
+          `
+          *,
+          categories (
+            id,
+            name
+          )
+        `,
+          { count: "exact" }
+        )
         .order("name")
         .range(0, BATCH_SIZE - 1);
 
       if (user?.id) {
-        subsQuery = subsQuery.eq("user_id", user.id);
+        query = query.eq("user_id", user.id);
       }
 
-      let catsQuery = supabase.from("categories").select("*").order("name");
+      const { data, error, count } = await query;
 
-      if (user?.id) {
-        catsQuery = catsQuery.eq("user_id", user.id);
-      }
+      if (error) throw error;
 
-      const [subsRes, catsRes] = await Promise.all([subsQuery, catsQuery]);
-
-      if (subsRes.error) throw subsRes.error;
-      if (catsRes.error) throw catsRes.error;
-
-      setSubcategories(subsRes.data || []);
-      setHasMore((subsRes.data?.length || 0) === BATCH_SIZE);
-      setDisplayCount(subsRes.data?.length || 0);
-      setCategories(catsRes.data || []);
+      setSubcategories(data || []);
+      setTotalCount(count || 0);
+      setHasMore((data?.length || 0) === BATCH_SIZE);
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Failed to load subcategories");
@@ -96,7 +90,15 @@ const SubcategoriesPage = () => {
 
       let query = supabase
         .from("subcategories")
-        .select("*")
+        .select(
+          `
+          *,
+          categories (
+            id,
+            name
+          )
+        `
+        )
         .order("name")
         .range(from, to);
 
@@ -110,7 +112,6 @@ const SubcategoriesPage = () => {
 
       setSubcategories((prev) => [...prev, ...(data || [])]);
       setHasMore((data?.length || 0) === BATCH_SIZE);
-      setDisplayCount((prev) => prev + (data?.length || 0));
     } catch (error) {
       toast.error("Failed to load more subcategories");
     } finally {
@@ -118,9 +119,7 @@ const SubcategoriesPage = () => {
     }
   };
 
-  // When adding, editing, or deleting, reload all data from scratch
   const reloadAllData = async () => {
-    setDisplayCount(BATCH_SIZE);
     await loadInitialData();
   };
 
@@ -136,9 +135,15 @@ const SubcategoriesPage = () => {
     );
 
     try {
-      const category = categories.find((c) => c.id === formData.categoryId);
+      // Fetch category info for embedding generation
+      const { data: categoryData } = await supabase
+        .from("categories")
+        .select("name")
+        .eq("id", formData.categoryId)
+        .single();
+
       // Generate AI-powered embedding using MiniLM-v2 model
-      const text = `${category?.name || ""} ${formData.name}`.trim();
+      const text = `${categoryData?.name || ""} ${formData.name}`.trim();
       const embedding = await generateEmbedding(text);
 
       const { error } = await supabase.from("subcategories").insert({
@@ -174,9 +179,15 @@ const SubcategoriesPage = () => {
     );
 
     try {
-      const category = categories.find((c) => c.id === formData.categoryId);
+      // Fetch category info for embedding generation
+      const { data: categoryData } = await supabase
+        .from("categories")
+        .select("name")
+        .eq("id", formData.categoryId)
+        .single();
+
       // Regenerate AI-powered embedding using MiniLM-v2 model
-      const text = `${category?.name || ""} ${formData.name}`.trim();
+      const text = `${categoryData?.name || ""} ${formData.name}`.trim();
       const embedding = await generateEmbedding(text);
 
       const { error } = await supabase
@@ -227,29 +238,51 @@ const SubcategoriesPage = () => {
     }
   };
 
-  const getCategoryName = (categoryId) => {
-    return categories.find((c) => c.id === categoryId)?.name || "Unknown";
-  };
-
-  // Remove local filtering and fetch from supabase on search
+  // Search with debounce
   useEffect(() => {
-    if (searchTerm.trim() === "") {
+    // If search is cleared and we were searching, reload initial data
+    if (searchTerm.trim() === "" && isSearching) {
+      setIsSearching(false);
       loadInitialData();
       return;
     }
+
+    // Don't search if empty
+    if (searchTerm.trim() === "") {
+      return;
+    }
+
+    // Mark that we're searching
+    setIsSearching(true);
+
     // Debounce search
     const timeout = setTimeout(async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from("subcategories")
-          .select("*")
+          .select(
+            `
+            *,
+            categories (
+              id,
+              name
+            )
+          `,
+            { count: "exact" }
+          )
           .ilike("name", `%${searchTerm}%`)
           .order("name");
+
+        if (user?.id) {
+          query = query.eq("user_id", user.id);
+        }
+
+        const { data, error, count } = await query;
         if (error) throw error;
         setSubcategories(data || []);
+        setTotalCount(count || 0);
         setHasMore(false);
-        setDisplayCount(data?.length || 0);
       } catch (error) {
         toast.error("Failed to search subcategories");
       } finally {
@@ -260,7 +293,6 @@ const SubcategoriesPage = () => {
     // eslint-disable-next-line
   }, [searchTerm]);
 
-  // Remove local filtering
   const displayedSubcategories = subcategories;
 
   useEffect(() => {
@@ -402,7 +434,7 @@ const SubcategoriesPage = () => {
                         {subcategory.name}
                       </span>
                       <span className="text-sm text-gray-500">
-                        {getCategoryName(subcategory.category_id)}
+                        {subcategory.categories?.name || "Unknown"}
                       </span>
                     </div>
                   </div>
@@ -466,140 +498,29 @@ const SubcategoriesPage = () => {
 
       {/* Add Modal */}
       {showAddModal && (
-        <Modal title="Add Subcategories" onClose={() => setShowAddModal(false)}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Name
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                placeholder="Enter subcategories name"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Categories
-              </label>
-              <select
-                value={formData.categoryId}
-                onChange={(e) =>
-                  setFormData({ ...formData, categoryId: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-              >
-                <option value="">Select categories</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={handleAdd}
-                disabled={saving}
-                className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    Save
-                  </>
-                )}
-              </button>
-              <button
-                onClick={() => setShowAddModal(false)}
-                disabled={saving}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </Modal>
+        <AddEditModal
+          title="Add Subcategories"
+          onClose={() => setShowAddModal(false)}
+          formData={formData}
+          setFormData={setFormData}
+          onSave={handleAdd}
+          saving={saving}
+          user={user}
+        />
       )}
 
       {/* Edit Modal */}
       {showEditModal && (
-        <Modal
+        <AddEditModal
           title="Edit Subcategories"
           onClose={() => setShowEditModal(false)}
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Name
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                placeholder="Enter subcategory name"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Parent Category
-              </label>
-              <select
-                value={formData.categoryId}
-                onChange={(e) =>
-                  setFormData({ ...formData, categoryId: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-              >
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={handleEdit}
-                disabled={saving}
-                className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Updating...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    Update
-                  </>
-                )}
-              </button>
-              <button
-                onClick={() => setShowEditModal(false)}
-                disabled={saving}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </Modal>
+          formData={formData}
+          setFormData={setFormData}
+          onSave={handleEdit}
+          saving={saving}
+          user={user}
+          isEdit={true}
+        />
       )}
 
       {/* Delete Confirmation Modal */}
@@ -672,6 +593,118 @@ const Modal = ({ title, children, onClose }) => {
         <div className="p-6">{children}</div>
       </div>
     </div>
+  );
+};
+
+const AddEditModal = ({
+  title,
+  onClose,
+  formData,
+  setFormData,
+  onSave,
+  saving,
+  user,
+  isEdit,
+}) => {
+  const [categories, setCategories] = useState([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
+
+  useEffect(() => {
+    const fetchCategories = async () => {
+      setLoadingCategories(true);
+      try {
+        let query = supabase
+          .from("categories")
+          .select("id, name")
+          .order("name");
+
+        if (user?.id) {
+          query = query.eq("user_id", user.id);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        setCategories(data || []);
+      } catch (error) {
+        console.error("Error loading categories:", error);
+        toast.error("Failed to load categories");
+      } finally {
+        setLoadingCategories(false);
+      }
+    };
+
+    fetchCategories();
+  }, [user?.id]);
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Name
+          </label>
+          <input
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+            placeholder={`Enter subcategor${isEdit ? "y" : "ies"} name`}
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            {isEdit ? "Parent Category" : "Categories"}
+          </label>
+          {loadingCategories ? (
+            <div className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50">
+              <div className="animate-pulse h-5 bg-gray-200 rounded"></div>
+            </div>
+          ) : (
+            <select
+              value={formData.categoryId}
+              onChange={(e) =>
+                setFormData({ ...formData, categoryId: e.target.value })
+              }
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+            >
+              {!isEdit && <option value="">Select categories</option>}
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onSave}
+            disabled={saving || loadingCategories}
+            className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                {isEdit ? "Updating..." : "Saving..."}
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                {isEdit ? "Update" : "Save"}
+              </>
+            )}
+          </button>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 };
 

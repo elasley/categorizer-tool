@@ -25,8 +25,6 @@ const Categories = () => {
   const [categories, setCategories] = useState([]);
   const [categoriesPage, setCategoriesPage] = useState(0);
   const [hasMoreCategories, setHasMoreCategories] = useState(true);
-  const [subcategories, setSubcategories] = useState([]);
-  const [parttypes, setParttypes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [editValue, setEditValue] = useState("");
@@ -38,9 +36,9 @@ const Categories = () => {
     subcategories: 0,
     partTypes: 0,
   });
-  const [displayCount, setDisplayCount] = useState(20);
   const [loadingMore, setLoadingMore] = useState(false);
   const observerTarget = React.useRef(null);
+  const PAGE_SIZE = 10; // Reduced from 20 for faster initial load
 
   // Modal state for adding new category, subcategory, or part type
   const [showAddModal, setShowAddModal] = useState(false);
@@ -127,7 +125,7 @@ const Categories = () => {
           setAdding(false);
           return;
         }
-        // Find parent category name for embedding
+        // Find parent category name for embedding from nested structure
         const category = categories.find((c) => c.id === parentCategoryId);
         const subcategoryText = `${
           category?.name || ""
@@ -146,12 +144,12 @@ const Categories = () => {
           setAdding(false);
           return;
         }
-        // Find parent subcategory and category names for embedding
-        const subcategory = subcategories.find(
-          (s) => s.id === parentSubcategoryId
+        // Find parent subcategory and category names for embedding from nested structure
+        const category = categories.find((c) =>
+          (c.subcategories || []).some((s) => s.id === parentSubcategoryId)
         );
-        const category = categories.find(
-          (c) => c.id === subcategory?.category_id
+        const subcategory = category?.subcategories?.find(
+          (s) => s.id === parentSubcategoryId
         );
         const partTypeText = `${category?.name || ""} ${
           subcategory?.name || ""
@@ -175,22 +173,43 @@ const Categories = () => {
   };
 
   useEffect(() => {
-    // Reset pagination and load first batch
+    // Load stats and first batch of categories in parallel
     setCategories([]);
     setCategoriesPage(0);
     setHasMoreCategories(true);
+    loadStats();
     loadCategories(0, true);
-    loadSubcategoriesAndParttypes();
   }, []);
 
   const loadCategories = async (page = 0, reset = false) => {
-    setLoading(true);
+    if (reset) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
     try {
-      const from = page * 20;
-      const to = from + 19;
-      const { data, error, count } = await supabase
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      // Load categories with nested subcategories and parttypes using foreign key relations
+      const { data, error } = await supabase
         .from("categories")
-        .select("*", { count: "exact" })
+        .select(
+          `
+          id,
+          name,
+          subcategories(
+            id,
+            name,
+            category_id,
+            parttypes(
+              id,
+              name,
+              subcategory_id
+            )
+          )
+        `
+        )
         .order("name", { ascending: true })
         .range(from, to);
 
@@ -201,51 +220,39 @@ const Categories = () => {
       } else {
         setCategories((prev) => [...prev, ...(data || [])]);
       }
-      setHasMoreCategories((data?.length || 0) === 20);
+      setHasMoreCategories((data?.length || 0) === PAGE_SIZE);
       setCategoriesPage(page);
-      // Update stats for categories count
-      setStats((prev) => ({
-        ...prev,
-        categories: count ?? (reset ? data?.length || 0 : prev.categories),
-      }));
     } catch (error) {
       toast.error("Failed to load categories");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
-  const loadSubcategoriesAndParttypes = async () => {
-    setLoading(true);
+  const loadStats = async () => {
     try {
-      // Load subcategories with category info
-      const { data: subcategoriesData, error: subcategoriesError } =
-        await supabase
-          .from("subcategories")
-          .select("*, categories(name)")
-          .order("name", { ascending: true });
+      // Load only counts for stats - much faster than loading all data
+      const [categoriesCount, subcategoriesCount, parttypesCount] =
+        await Promise.all([
+          supabase
+            .from("categories")
+            .select("*", { count: "exact", head: true }),
+          supabase
+            .from("subcategories")
+            .select("*", { count: "exact", head: true }),
+          supabase
+            .from("parttypes")
+            .select("*", { count: "exact", head: true }),
+        ]);
 
-      if (subcategoriesError) throw subcategoriesError;
-
-      // Load parttypes with subcategory and category info
-      const { data: parttypesData, error: parttypesError } = await supabase
-        .from("parttypes")
-        .select("*, subcategories(name, category_id, categories(name))")
-        .order("name", { ascending: true });
-
-      if (parttypesError) throw parttypesError;
-
-      setSubcategories(subcategoriesData || []);
-      setParttypes(parttypesData || []);
-      setStats((prev) => ({
-        ...prev,
-        subcategories: subcategoriesData?.length || 0,
-        partTypes: parttypesData?.length || 0,
-      }));
+      setStats({
+        categories: categoriesCount.count || 0,
+        subcategories: subcategoriesCount.count || 0,
+        partTypes: parttypesCount.count || 0,
+      });
     } catch (error) {
-      toast.error("Failed to load data");
-    } finally {
-      setLoading(false);
+      console.error("Failed to load stats", error);
     }
   };
 
@@ -255,8 +262,7 @@ const Categories = () => {
     setCategories([]);
     setCategoriesPage(0);
     setHasMoreCategories(true);
-    await loadCategories(0, true);
-    await loadSubcategoriesAndParttypes();
+    await Promise.all([loadStats(), loadCategories(0, true)]);
   };
 
   // Edit handlers
@@ -369,8 +375,12 @@ const Categories = () => {
       setIsAllExpanded(false);
     } else {
       // Expand all
-      setExpandedCategories(new Set(categories.map((c) => c.id)));
-      setExpandedSubcategories(new Set(subcategories.map((s) => s.id)));
+      const allCategoryIds = categories.map((c) => c.id);
+      const allSubcategoryIds = categories.flatMap((c) =>
+        (c.subcategories || []).map((s) => s.id)
+      );
+      setExpandedCategories(new Set(allCategoryIds));
+      setExpandedSubcategories(new Set(allSubcategoryIds));
       setIsAllExpanded(true);
     }
   };
@@ -547,9 +557,8 @@ const Categories = () => {
                     <div className="border border-gray-200 rounded-lg overflow-hidden">
                       <div className="p-2 max-h-[600px] overflow-y-auto space-y-2">
                         {categories.map((category) => {
-                          const categorySubcategories = subcategories.filter(
-                            (sub) => sub.category_id === category.id
-                          );
+                          const categorySubcategories =
+                            category.subcategories || [];
                           const isCategoryExpanded = expandedCategories.has(
                             category.id
                           );
@@ -660,10 +669,7 @@ const Categories = () => {
                                   {categorySubcategories.length > 0 ? (
                                     categorySubcategories.map((subcategory) => {
                                       const subcategoryParttypes =
-                                        parttypes.filter(
-                                          (pt) =>
-                                            pt.subcategory_id === subcategory.id
-                                        );
+                                        subcategory.parttypes || [];
                                       const isSubcategoryExpanded =
                                         expandedSubcategories.has(
                                           subcategory.id
@@ -894,14 +900,8 @@ const Categories = () => {
                       </div>
                       {/* Pagination Footer */}
                       <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-                        Showing {categories.length}{" "}
-                        {categories.length === 1 ? "category" : "categories"},{" "}
-                        {subcategories.length}{" "}
-                        {subcategories.length === 1
-                          ? "subcategory"
-                          : "subcategories"}
-                        , {parttypes.length}{" "}
-                        {parttypes.length === 1 ? "part type" : "part types"}
+                        Showing {categories.length} of {stats.categories}{" "}
+                        {stats.categories === 1 ? "category" : "categories"}
                       </div>
                     </div>
                   </>

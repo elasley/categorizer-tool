@@ -19,15 +19,12 @@ const BATCH_SIZE = 20;
 const ParttypesPage = () => {
   const { user } = useSelector((state) => state.auth);
   const [parttypes, setParttypes] = useState([]);
-  const [subcategories, setSubcategories] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({ name: "", subcategoryId: "" });
-  const [displayCount, setDisplayCount] = useState(20);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -35,64 +32,52 @@ const ParttypesPage = () => {
   const [deleting, setDeleting] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
+  const [isSearching, setIsSearching] = useState(false);
   const observerTarget = React.useRef(null);
+  const hasLoadedRef = React.useRef(false);
 
   useEffect(() => {
+    // Prevent double loading in React StrictMode
+    if (hasLoadedRef.current) return;
+    hasLoadedRef.current = true;
     loadInitialData();
+    // eslint-disable-next-line
   }, []);
 
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      // Fetch total count only
-      let countQuery = supabase
+      // Single API call with joins to fetch parttypes with subcategory and category data
+      let query = supabase
         .from("parttypes")
-        .select("*", { count: "exact", head: true });
-
-      if (user?.id) {
-        countQuery = countQuery.eq("user_id", user.id);
-      }
-
-      const countRes = await countQuery;
-      setTotalCount(countRes.count || 0);
-
-      let ptsQuery = supabase
-        .from("parttypes")
-        .select("*")
+        .select(
+          `
+          *,
+          subcategories (
+            id,
+            name,
+            categories (
+              id,
+              name
+            )
+          )
+        `,
+          { count: "exact" }
+        )
         .order("name")
         .range(0, BATCH_SIZE - 1);
 
       if (user?.id) {
-        ptsQuery = ptsQuery.eq("user_id", user.id);
+        query = query.eq("user_id", user.id);
       }
 
-      let subsQuery = supabase.from("subcategories").select("*").order("name");
+      const { data, error, count } = await query;
 
-      if (user?.id) {
-        subsQuery = subsQuery.eq("user_id", user.id);
-      }
+      if (error) throw error;
 
-      let catsQuery = supabase.from("categories").select("*").order("name");
-
-      if (user?.id) {
-        catsQuery = catsQuery.eq("user_id", user.id);
-      }
-
-      const [ptsRes, subsRes, catsRes] = await Promise.all([
-        ptsQuery,
-        subsQuery,
-        catsQuery,
-      ]);
-
-      if (ptsRes.error) throw ptsRes.error;
-      if (subsRes.error) throw subsRes.error;
-      if (catsRes.error) throw catsRes.error;
-
-      setParttypes(ptsRes.data || []);
-      setHasMore((ptsRes.data?.length || 0) === BATCH_SIZE);
-      setDisplayCount(ptsRes.data?.length || 0);
-      setSubcategories(subsRes.data || []);
-      setCategories(catsRes.data || []);
+      setParttypes(data || []);
+      setTotalCount(count || 0);
+      setHasMore((data?.length || 0) === BATCH_SIZE);
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Failed to load part types");
@@ -109,7 +94,19 @@ const ParttypesPage = () => {
 
       let query = supabase
         .from("parttypes")
-        .select("*")
+        .select(
+          `
+          *,
+          subcategories (
+            id,
+            name,
+            categories (
+              id,
+              name
+            )
+          )
+        `
+        )
         .order("name")
         .range(from, to);
 
@@ -123,7 +120,6 @@ const ParttypesPage = () => {
 
       setParttypes((prev) => [...prev, ...(data || [])]);
       setHasMore((data?.length || 0) === BATCH_SIZE);
-      setDisplayCount((prev) => prev + (data?.length || 0));
     } catch (error) {
       toast.error("Failed to load more part types");
     } finally {
@@ -143,17 +139,25 @@ const ParttypesPage = () => {
     );
 
     try {
-      const subcategory = subcategories.find(
-        (s) => s.id === formData.subcategoryId
-      );
-      const category = categories.find(
-        (c) => c.id === subcategory?.category_id
-      );
+      // Fetch subcategory and category info for embedding generation
+      const { data: subcatData } = await supabase
+        .from("subcategories")
+        .select(
+          `
+          id,
+          name,
+          categories (
+            name
+          )
+        `
+        )
+        .eq("id", formData.subcategoryId)
+        .single();
 
       // Generate AI-powered embedding using MiniLM-v2 model
-      const text = `${category?.name || ""} ${subcategory?.name || ""} ${
-        formData.name
-      }`.trim();
+      const text = `${subcatData?.categories?.name || ""} ${
+        subcatData?.name || ""
+      } ${formData.name}`.trim();
       const embedding = await generateEmbedding(text);
 
       const { error } = await supabase.from("parttypes").insert({
@@ -189,17 +193,25 @@ const ParttypesPage = () => {
     );
 
     try {
-      const subcategory = subcategories.find(
-        (s) => s.id === formData.subcategoryId
-      );
-      const category = categories.find(
-        (c) => c.id === subcategory?.category_id
-      );
+      // Fetch subcategory and category info for embedding generation
+      const { data: subcatData } = await supabase
+        .from("subcategories")
+        .select(
+          `
+          id,
+          name,
+          categories (
+            name
+          )
+        `
+        )
+        .eq("id", formData.subcategoryId)
+        .single();
 
       // Regenerate AI-powered embedding using MiniLM-v2 model
-      const text = `${category?.name || ""} ${subcategory?.name || ""} ${
-        formData.name
-      }`.trim();
+      const text = `${subcatData?.categories?.name || ""} ${
+        subcatData?.name || ""
+      } ${formData.name}`.trim();
       const embedding = await generateEmbedding(text);
 
       const { error } = await supabase
@@ -251,41 +263,58 @@ const ParttypesPage = () => {
   };
 
   const reloadAllData = async () => {
-    setDisplayCount(BATCH_SIZE);
     await loadInitialData();
   };
 
-  const getSubcategoryName = (subcategoryId) => {
-    return subcategories.find((s) => s.id === subcategoryId)?.name || "Unknown";
-  };
-
-  const getCategoryName = (subcategoryId) => {
-    const subcategory = subcategories.find((s) => s.id === subcategoryId);
-    return (
-      categories.find((c) => c.id === subcategory?.category_id)?.name ||
-      "Unknown"
-    );
-  };
-
-  // Remove local filtering and fetch from supabase on search
+  // Search with debounce
   useEffect(() => {
-    if (searchTerm.trim() === "") {
+    // If search is cleared and we were searching, reload initial data
+    if (searchTerm.trim() === "" && isSearching) {
+      setIsSearching(false);
       loadInitialData();
       return;
     }
+
+    // Don't search if empty
+    if (searchTerm.trim() === "") {
+      return;
+    }
+
+    // Mark that we're searching
+    setIsSearching(true);
+
     // Debounce search
     const timeout = setTimeout(async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from("parttypes")
-          .select("*")
+          .select(
+            `
+            *,
+            subcategories (
+              id,
+              name,
+              categories (
+                id,
+                name
+              )
+            )
+          `,
+            { count: "exact" }
+          )
           .ilike("name", `%${searchTerm}%`)
           .order("name");
+
+        if (user?.id) {
+          query = query.eq("user_id", user.id);
+        }
+
+        const { data, error, count } = await query;
         if (error) throw error;
         setParttypes(data || []);
+        setTotalCount(count || 0);
         setHasMore(false);
-        setDisplayCount(data?.length || 0);
       } catch (error) {
         toast.error("Failed to search part types");
       } finally {
@@ -437,8 +466,9 @@ const ParttypesPage = () => {
                         {parttype.name}
                       </span>
                       <span className="text-sm text-gray-500">
-                        {getCategoryName(parttype.subcategory_id)} {" > "}
-                        {getSubcategoryName(parttype.subcategory_id)}
+                        {parttype.subcategories?.categories?.name || "Unknown"}{" "}
+                        {" > "}
+                        {parttype.subcategories?.name || "Unknown"}
                       </span>
                     </div>
                   </div>
@@ -500,147 +530,29 @@ const ParttypesPage = () => {
 
       {/* Add Modal */}
       {showAddModal && (
-        <Modal
+        <AddEditModal
           title="Add Part Type Categories"
           onClose={() => setShowAddModal(false)}
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Name
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                placeholder="Enter part type categories name"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Parent Subcategory
-              </label>
-              <select
-                value={formData.subcategoryId}
-                onChange={(e) =>
-                  setFormData({ ...formData, subcategoryId: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-              >
-                <option value="">Select subcategories</option>
-                {subcategories.map((sub) => (
-                  <option key={sub.id} value={sub.id}>
-                    {categories.find((c) => c.id === sub.category_id)?.name}{" "}
-                    {" > "}
-                    {sub.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={handleAdd}
-                disabled={saving}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    Save
-                  </>
-                )}
-              </button>
-              <button
-                onClick={() => setShowAddModal(false)}
-                disabled={saving}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </Modal>
+          formData={formData}
+          setFormData={setFormData}
+          onSave={handleAdd}
+          saving={saving}
+          user={user}
+        />
       )}
 
       {/* Edit Modal */}
       {showEditModal && (
-        <Modal
+        <AddEditModal
           title="Edit Part Type Categories"
           onClose={() => setShowEditModal(false)}
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Name
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                placeholder="Enter part type name"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Parent Subcategory
-              </label>
-              <select
-                value={formData.subcategoryId}
-                onChange={(e) =>
-                  setFormData({ ...formData, subcategoryId: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-              >
-                {subcategories.map((sub) => (
-                  <option key={sub.id} value={sub.id}>
-                    {categories.find((c) => c.id === sub.category_id)?.name}{" "}
-                    {" > "}
-                    {sub.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={handleEdit}
-                disabled={saving}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Updating...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    Update
-                  </>
-                )}
-              </button>
-              <button
-                onClick={() => setShowEditModal(false)}
-                disabled={saving}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </Modal>
+          formData={formData}
+          setFormData={setFormData}
+          onSave={handleEdit}
+          saving={saving}
+          user={user}
+          isEdit={true}
+        />
       )}
 
       {/* Delete Confirmation Modal */}
@@ -713,6 +625,129 @@ const Modal = ({ title, children, onClose }) => {
         <div className="p-6">{children}</div>
       </div>
     </div>
+  );
+};
+
+const AddEditModal = ({
+  title,
+  onClose,
+  formData,
+  setFormData,
+  onSave,
+  saving,
+  user,
+  isEdit,
+}) => {
+  const [subcategories, setSubcategories] = useState([]);
+  const [loadingSubcats, setLoadingSubcats] = useState(true);
+
+  useEffect(() => {
+    const fetchSubcategories = async () => {
+      setLoadingSubcats(true);
+      try {
+        let query = supabase
+          .from("subcategories")
+          .select(
+            `
+            id,
+            name,
+            categories (
+              id,
+              name
+            )
+          `
+          )
+          .order("name");
+
+        if (user?.id) {
+          query = query.eq("user_id", user.id);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        setSubcategories(data || []);
+      } catch (error) {
+        console.error("Error loading subcategories:", error);
+        toast.error("Failed to load subcategories");
+      } finally {
+        setLoadingSubcats(false);
+      }
+    };
+
+    fetchSubcategories();
+  }, [user?.id]);
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Name
+          </label>
+          <input
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+            placeholder={`Enter part type ${
+              isEdit ? "name" : "categories name"
+            }`}
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Parent Subcategory
+          </label>
+          {loadingSubcats ? (
+            <div className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50">
+              <div className="animate-pulse h-5 bg-gray-200 rounded"></div>
+            </div>
+          ) : (
+            <select
+              value={formData.subcategoryId}
+              onChange={(e) =>
+                setFormData({ ...formData, subcategoryId: e.target.value })
+              }
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+            >
+              {!isEdit && <option value="">Select subcategories</option>}
+              {subcategories.map((sub) => (
+                <option key={sub.id} value={sub.id}>
+                  {sub.categories?.name || "Unknown"} {" > "} {sub.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onSave}
+            disabled={saving || loadingSubcats}
+            className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                {isEdit ? "Updating..." : "Saving..."}
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                {isEdit ? "Update" : "Save"}
+              </>
+            )}
+          </button>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 };
 
