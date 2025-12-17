@@ -1994,12 +1994,12 @@ const AcesPiesCategorizationTool = () => {
             </div>
           )}
 
-          <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
+          <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-100">
             <div className="flex flex-wrap gap-4">
               <button
                 onClick={handleOpenAISuggest}
                 disabled={isProcessing || products.length === 0}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all font-medium"
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md transition-all"
               >
                 <Zap className="w-4 h-4" />
                 {isProcessing ? `AI Suggesting...` : `OpenAI Auto-Suggest`}
@@ -2007,7 +2007,7 @@ const AcesPiesCategorizationTool = () => {
               <button
                 onClick={autoSuggestAll}
                 disabled={isProcessing}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md transition-all"
               >
                 <Brain className="w-4 h-4" />
                 {isProcessing
@@ -2015,7 +2015,7 @@ const AcesPiesCategorizationTool = () => {
                   : `Auto-Categorize with Vector Similarity`}
               </button>
 
-              <div className="flex items-center space-x-2 px-4 py-2 bg-white rounded-lg border border-gray-200 shadow-sm">
+              <div className="flex items-center space-x-2 px-4 py-2 bg-white rounded-lg border border-blue-200 shadow-sm">
                 <Target className="h-4 w-4 text-blue-600" />
                 <span className="text-sm font-medium text-gray-700">
                   Using: {activeCategories === "user" ? "Custom" : "ACES"}{" "}
@@ -2026,7 +2026,7 @@ const AcesPiesCategorizationTool = () => {
               <button
                 onClick={assignCategoriesViaEdgeFunction}
                 disabled={products.length === 0 || isProcessing}
-                className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 flex items-center gap-2 disabled:opacity-50 shadow-sm"
+                className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 flex items-center gap-2 disabled:opacity-50 shadow-sm hover:shadow-md transition-all"
               >
                 <Target className="w-4 h-4" />
                 Categories Assign
@@ -2067,7 +2067,7 @@ const AcesPiesCategorizationTool = () => {
               <button
                 onClick={handleExport}
                 disabled={products.length === 0}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 shadow-sm"
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-50 shadow-sm hover:shadow-md transition-all"
               >
                 <Download className="w-4 h-4" />
                 Export Results
@@ -2075,7 +2075,7 @@ const AcesPiesCategorizationTool = () => {
 
               <button
                 onClick={() => setShowTaxonomyManager(true)}
-                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm"
+                className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 flex items-center gap-2 shadow-sm hover:shadow-md transition-all"
               >
                 <BarChart3 className="w-4 h-4" />
                 Taxonomy Manager
@@ -2083,7 +2083,7 @@ const AcesPiesCategorizationTool = () => {
 
               <button
                 onClick={() => setShowBulkAssignmentTool(true)}
-                className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2 shadow-sm"
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 flex items-center gap-2 shadow-sm hover:shadow-md transition-all"
               >
                 <Users className="w-4 h-4" />
                 Bulk Assignment
@@ -2092,7 +2092,7 @@ const AcesPiesCategorizationTool = () => {
               {stats.problematic > 0 && (
                 <button
                   onClick={openBulkAssignmentForProblematic}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 shadow-sm animate-pulse"
+                  className="px-4 py-2 bg-rose-600 text-white rounded-lg hover:bg-rose-700 flex items-center gap-2 shadow-sm hover:shadow-md transition-all animate-pulse"
                 >
                   <AlertTriangle className="w-4 h-4" />
                   Fix Issues ({stats.problematic})
@@ -2102,7 +2102,7 @@ const AcesPiesCategorizationTool = () => {
 
               <button
                 onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 flex items-center gap-2 shadow-sm"
+                className="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 flex items-center gap-2 shadow-sm hover:shadow-md transition-all"
               >
                 <Settings className="w-4 h-4" />
                 Advanced Settings

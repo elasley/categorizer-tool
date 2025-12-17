@@ -174,9 +174,23 @@ const normalizeHeader = (header) => {
     details: "description",
     brand: "brand",
     manufacturer: "brand",
+    mfg: "brand",
     "part number": "partNumber",
     part_number: "partNumber",
-    sku: "partNumber",
+    partnumber: "partNumber",
+    "item number": "partNumber",
+    sku: "sku",
+    "sku number": "sku",
+    "master sku": "sku",
+    "product sku": "sku",
+    mpn: "mpn",
+    "manufacturer part number": "mpn",
+    "mfr part number": "mpn",
+    "mfg part number": "mpn",
+    upc: "upc",
+    "upc code": "upc",
+    barcode: "upc",
+    ean: "upc",
     // Category mappings
     category: "originalCategory",
     "product category": "originalCategory",
@@ -281,8 +295,21 @@ export const exportToCSV = (
     return;
   }
 
-  // Only export name and final categorization (rename suggestedX to final names)
-  const finalHeaders = ["name", "category", "subcategory", "parttype"];
+  // Export all available fields including descriptions, SKU, brand, etc.
+  const finalHeaders = [
+    "name",
+    "description",
+    "brand",
+    "sku",
+    "partNumber",
+    "mpn",
+    "upc",
+    "category",
+    "subcategory",
+    "parttype",
+    "confidence",
+    "status",
+  ];
 
   const csvContent = [
     finalHeaders.join(","),
@@ -294,12 +321,59 @@ export const exportToCSV = (
           // Map the suggested fields to the final export names
           if (header === "name") {
             value = product.title || product.name || "";
+          } else if (header === "description") {
+            value = product.description || product.desc || "";
+          } else if (header === "brand") {
+            value =
+              product.brand ||
+              product.Brand ||
+              product.manufacturer ||
+              product.mfg ||
+              "";
+          } else if (header === "sku") {
+            value =
+              product.sku ||
+              product.SKU ||
+              product["Master SKU"] ||
+              product["master sku"] ||
+              product.partNumber ||
+              product.mpn ||
+              product.MPN ||
+              "";
+          } else if (header === "partNumber") {
+            value =
+              product.partNumber ||
+              product["Part Number"] ||
+              product.sku ||
+              product.mpn ||
+              product.MPN ||
+              "";
+          } else if (header === "mpn") {
+            value =
+              product.mpn ||
+              product.MPN ||
+              product["Manufacturer Part Number"] ||
+              product.partNumber ||
+              product.sku ||
+              "";
+          } else if (header === "upc") {
+            value =
+              product.upc ||
+              product.UPC ||
+              product["UPC Code"] ||
+              product.barcode ||
+              product.ean ||
+              "";
           } else if (header === "category") {
             value = product.suggestedCategory || "";
           } else if (header === "subcategory") {
             value = product.suggestedSubcategory || "";
           } else if (header === "parttype") {
             value = product.suggestedPartType || "";
+          } else if (header === "confidence") {
+            value = product.confidence || "";
+          } else if (header === "status") {
+            value = product.status || "";
           }
 
           if (typeof value === "string" && value.trim()) {
