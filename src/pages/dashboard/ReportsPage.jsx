@@ -9,10 +9,7 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle,
-  ChevronDown,
-  ChevronUp,
   Download,
-  ExternalLink,
   Eye,
   Search,
 } from "lucide-react";
@@ -42,14 +39,13 @@ const ReportsPage = () => {
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
   const [expandedReport, setExpandedReport] = useState(null);
-  const [viewingFile, setViewingFile] = useState(null);
-  const [csvData, setCsvData] = useState(null);
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const searchTimeout = useRef(null);
+  const observerTarget = useRef(null);
 
-  const ITEMS_PER_PAGE = 20; // Use 20 for a more natural scroll experience
+  const ITEMS_PER_PAGE = 20; // Fetch data in batches of 20
 
   // Fetch reports with pagination or search
   const fetchReports = useCallback(
@@ -127,23 +123,28 @@ const ReportsPage = () => {
     };
   }, [search, fetchReports]);
 
-  // Infinite scroll handler (only when not searching)
+  // Intersection Observer for infinite scroll (only when not searching)
   useEffect(() => {
-    if (search) return;
-    const handleScroll = () => {
-      if (loadingMore || !hasMore) return;
-      const scrollTop =
-        window.pageYOffset || document.documentElement.scrollTop;
-      const scrollHeight = document.documentElement.scrollHeight;
-      const clientHeight = document.documentElement.clientHeight;
-      // If user is near the bottom, load more
-      if (scrollTop + clientHeight >= scrollHeight - 200) {
-        loadMore();
+    if (!observerTarget.current || search) return;
+    if (!hasMore || loadingMore || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          loadMore();
+        }
+      },
+      { threshold: 1.0 }
+    );
+
+    observer.observe(observerTarget.current);
+
+    return () => {
+      if (observerTarget.current) {
+        observer.unobserve(observerTarget.current);
       }
     };
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [loadingMore, hasMore, page, search]);
+  }, [hasMore, loadingMore, loading, search]);
 
   const loadMore = () => {
     if (search) return;
@@ -153,10 +154,7 @@ const ReportsPage = () => {
     fetchReports(nextPage, true, "");
   };
 
-  // Toggle report details
-  const toggleExpand = (reportId) => {
-    setExpandedReport(expandedReport === reportId ? null : reportId);
-  };
+
 
   // Download file
   const downloadFile = async (fileUrl, fileName) => {
@@ -191,152 +189,7 @@ const ReportsPage = () => {
     navigate(`/products-view/${encodedUrl}`);
   };
 
-  // Old view file function (keeping for reference)
-  const viewFileOld = async (fileUrl, fileName) => {
-    try {
-      toast.loading("Loading file...");
 
-      const { data, error } = await supabase.storage
-        .from("product-uploads")
-        .download(fileUrl);
-
-      if (error) throw error;
-
-      // Read CSV content
-      const text = await data.text();
-      const lines = text.split("\n").filter((line) => line.trim());
-
-      if (lines.length === 0) {
-        toast.error("File is empty");
-        return;
-      }
-
-      // Parse CSV
-      const headers = lines[0]
-        .split(",")
-        .map((h) => h.trim().replace(/"/g, ""));
-      const rows = lines.slice(1).map((line) => {
-        const values = line.split(",").map((v) => v.trim().replace(/"/g, ""));
-        return headers.reduce((obj, header, index) => {
-          obj[header] = values[index] || "";
-          return obj;
-        }, {});
-      });
-
-      // Create HTML table
-      let html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>${fileName}</title>
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { 
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              padding: 20px;
-              background: #f5f5f5;
-            }
-            .container {
-              max-width: 100%;
-              background: white;
-              border-radius: 8px;
-              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-              overflow: hidden;
-            }
-            .header {
-              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              color: white;
-              padding: 20px;
-              font-size: 24px;
-              font-weight: bold;
-            }
-            .table-wrapper {
-              overflow-x: auto;
-              padding: 20px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              min-width: 600px;
-            }
-            th {
-              background: #3b82f6;
-              color: white;
-              padding: 12px;
-              text-align: left;
-              font-weight: 600;
-              font-size: 12px;
-              text-transform: uppercase;
-              letter-spacing: 0.5px;
-              position: sticky;
-              top: 0;
-              z-index: 10;
-            }
-            td {
-              padding: 12px;
-              border-bottom: 1px solid #e5e7eb;
-              font-size: 14px;
-              color: #374151;
-            }
-            tr:hover {
-              background: #f9fafb;
-            }
-            tr:nth-child(even) {
-              background: #f9fafb;
-            }
-            .info {
-              padding: 15px 20px;
-              background: #eff6ff;
-              border-left: 4px solid #3b82f6;
-              margin: 20px;
-              border-radius: 4px;
-              color: #1e40af;
-              font-size: 14px;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">${fileName}</div>
-            <div class="info">Total Rows: ${rows.length}</div>
-            <div class="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    ${headers.map((h) => `<th>${h}</th>`).join("")}
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rows
-                    .map(
-                      (row) => `
-                    <tr>
-                      ${headers.map((h) => `<td>${row[h] || ""}</td>`).join("")}
-                    </tr>
-                  `
-                    )
-                    .join("")}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </body>
-        </html>
-      `;
-
-      // Open in new window
-      const newWindow = window.open("", "_blank");
-      newWindow.document.write(html);
-      newWindow.document.close();
-
-      toast.dismiss();
-      toast.success("File opened in new tab");
-    } catch (error) {
-      console.error("View error:", error);
-      toast.dismiss();
-      toast.error("Failed to view file");
-    }
-  };
 
   if (loading && !searching) {
     return (
@@ -696,26 +549,29 @@ const ReportsPage = () => {
                   ))}
                 </tbody>
               </table>
+              
+              {/* Infinite scroll trigger */}
+              {hasMore && !search && (
+                <div ref={observerTarget} className="p-0 m-0">
+                  {loadingMore && (
+                    <div className="flex justify-center bg-white py-4">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {/* Pagination Footer */}
+          {reports.length > 0 && (
+            <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
+              Showing {reports.length} of {totalCount}{" "}
+              {totalCount === 1 ? "report" : "reports"}
             </div>
           )}
         </div>
 
-        {/* Bottom Info Bar styled like the screenshot */}
-        {!search && (
-          <div className="w-full bg-gray-50 border-t border-gray-200 px-6 py-3">
-            <span className="text-gray-600 text-sm">
-              Showing {reports.length} of {totalCount} records
-            </span>
-          </div>
-        )}
 
-        {/* Loading More Indicator */}
-        {loadingMore && !search && (
-          <div className="flex justify-center items-center py-8">
-            <Loader2 className="w-8 h-8 text-blue-500 animate-spin mr-3" />
-            <span className="text-gray-600 font-medium">Loading more...</span>
-          </div>
-        )}
       </div>
     </div>
   );
