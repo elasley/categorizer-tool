@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useSelector } from "react-redux";
 import toast from "react-hot-toast";
 import { supabase } from "../../config/supabase";
@@ -17,8 +17,124 @@ import {
   ChevronDown,
   Plus,
   Save,
+  Search,
 } from "lucide-react";
 import LoadingSpinner from "../../components/LoadingSpinner";
+import { AnimatePresence, m, motion } from "framer-motion"; // Add for animation
+import ReactDOM from "react-dom";
+
+// --- Modern, reusable, animated dropdown button component ---
+const TransferDropdown = ({
+  buttonLabel,
+  options,
+  onSelect,
+  disabled,
+  width = "w-56",
+  color = "blue",
+  placeholder = "No available items",
+  open,
+  setOpen,
+}) => {
+  const [search, setSearch] = useState("");
+  const buttonRef = useRef(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0, right: 50, width: 0 });
+
+  useEffect(() => {
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setMenuPos({
+        top: rect.bottom + window.scrollY + 4,
+        left: rect.left + rect.width / 2 + window.scrollX,
+        width: rect.width,
+      });
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e) => {
+      if (
+        buttonRef.current &&
+        !buttonRef.current.contains(e.target) &&
+        !document.getElementById("transfer-dropdown-menu")?.contains(e.target)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const filtered = options.filter((opt) =>
+    opt.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const colorRing =
+    color === "blue"
+      ? "focus:ring-blue-500"
+      : color === "orange"
+      ? "focus:ring-orange-500"
+      : "focus:ring-purple-500";
+
+
+  const dropdownPanel = open ? (
+    <AnimatePresence>
+      <motion.div
+        id="transfer-dropdown-menu"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 8 }}
+        transition={{ duration: 0.18 }}
+        className={`absolute left-0 mt-2 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto ${width}`}
+        style={{ zIndex: 100 }}
+      >
+        <div className="sticky top-0 bg-white z-10 px-3 py-2 border-b border-gray-100 flex items-center gap-2">
+          <Search className="w-4 h-4 text-gray-400" />
+          <input
+            type="text"
+            className={`w-full px-2 py-1 bg-gray-50 rounded-md outline-none text-sm ${colorRing}`}
+            placeholder="Search..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            autoFocus
+          />
+        </div>
+        {filtered.length === 0 ? (
+          <div className="px-4 py-3 text-gray-400 text-sm">{placeholder}</div>
+        ) : (
+          filtered.map((opt) => (
+            <button
+              key={opt.id}
+              className={`w-full text-left px-4 py-2 hover:bg-${color}-50 transition-colors text-gray-800 font-medium`}
+              onClick={() => {
+                setOpen(false);
+                onSelect(opt);
+              }}
+            >
+              {opt.name}
+            </button>
+          ))
+        )}
+      </motion.div>
+    </AnimatePresence>
+  ) : null;
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg shadow hover:bg-gray-50 transition ${width} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+        onClick={() => !disabled && setOpen(!open)}
+        disabled={disabled}
+      >
+        {buttonLabel}
+        <ChevronDown className="w-4 h-4 ml-auto text-gray-500" />
+      </button>
+      {dropdownPanel}
+    </div>
+  );
+};
 
 const Categories = () => {
   const { user } = useSelector((state) => state.auth);
@@ -53,6 +169,16 @@ const Categories = () => {
   const [deleteItem, setDeleteItem] = useState(null);
   const [deleteType, setDeleteType] = useState("");
   const [deleting, setDeleting] = useState(false);
+  // Add state for optimistic updates
+  const [optimisticCategories, setOptimisticCategories] = useState(null);
+  // Add state for selected transfer item per category/subcategory
+  const [selectedTransferSub, setSelectedTransferSub] = useState({});
+  const [selectedTransferPart, setSelectedTransferPart] = useState({});
+  const [allCategories, setAllCategories] = useState([]);
+  const [allSubcategories, setAllSubcategories] = useState([]);
+  const [allParttypes, setAllParttypes] = useState([]);
+  // Track which category's TransferDropdown is open
+  const [openTransferDropdown, setOpenTransferDropdown] = useState(null);
 
   const handleOpenAddModal = (
     type,
@@ -181,6 +307,7 @@ const Categories = () => {
     loadCategories(0, true);
   }, []);
 
+  // Fetch categories with nested subcategories and parttypes (paginated)
   const loadCategories = async (page = 0, reset = false) => {
     if (reset) {
       setLoading(true);
@@ -191,7 +318,6 @@ const Categories = () => {
       const from = page * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      // Load categories with nested subcategories and parttypes using foreign key relations
       const { data, error } = await supabase
         .from("categories")
         .select(
@@ -413,6 +539,129 @@ const Categories = () => {
     // eslint-disable-next-line
   }, [categories, hasMoreCategories, loading, loadingMore, categoriesPage]);
 
+  // Fetch all for dropdowns (not paginated)
+  const fetchAllDropdownData = async () => {
+    try {
+      const [{ data: cats }, { data: subs }, { data: parts }] = await Promise.all([
+        supabase.from("categories").select("id, name"),
+        supabase.from("subcategories").select("id, name, category_id"),
+        supabase.from("parttypes").select("id, name, subcategory_id"),
+      ]);
+      setAllCategories(cats || []);
+      setAllSubcategories(subs || []);
+      setAllParttypes(parts || []);
+    } catch (err) {
+      console.error("Error fetching dropdown data:", err);
+    }
+  };
+
+  // Only fetch dropdown data on mount (not on transfer)
+  useEffect(() => {
+    fetchAllDropdownData();
+    // Optionally, also reload paginated categories if you want to keep everything in sync:
+    // loadCategories(0, true);
+  }, []);
+
+  // --- Transfer Subcategory Logic ---
+  const handleTransferSubcategory = async (subcategory, newCategoryId) => {
+    setOptimisticCategories((prev) => {
+      const prevCats = prev || categories;
+      let oldCatIdx = prevCats.findIndex((c) =>
+        (c.subcategories || []).some((s) => s.id === subcategory.id)
+      );
+      let newCatIdx = prevCats.findIndex((c) => c.id === newCategoryId);
+      if (oldCatIdx === -1 || newCatIdx === -1) return prevCats;
+      let oldCat = { ...prevCats[oldCatIdx] };
+      let newCat = { ...prevCats[newCatIdx] };
+      oldCat.subcategories = (oldCat.subcategories || []).filter(
+        (s) => s.id !== subcategory.id
+      );
+      newCat.subcategories = [
+        ...(newCat.subcategories || []),
+        { ...subcategory, category_id: newCategoryId },
+      ];
+      let newCats = [...prevCats];
+      newCats[oldCatIdx] = oldCat;
+      newCats[newCatIdx] = newCat;
+      return newCats;
+    });
+
+    const { error } = await supabase
+      .from("subcategories")
+      .update({ category_id: newCategoryId })
+      .eq("id", subcategory.id);
+
+    if (error) {
+      toast.error("Failed to transfer subcategory");
+      setOptimisticCategories(null);
+      loadAllData();
+    } else {
+      // Refresh the main table (categories) after transfer
+      await loadCategories(0, true);
+      setOptimisticCategories(null); // clear optimistic state after real data loads
+    }
+  };
+
+  // --- Transfer Part Type Logic ---
+  const handleTransferPartType = async (parttype, newSubcategoryId) => {
+    setOptimisticCategories((prev) => {
+      const prevCats = prev || categories;
+      let oldCatIdx, oldSubIdx, newCatIdx, newSubIdx;
+      prevCats.forEach((cat, ci) => {
+        (cat.subcategories || []).forEach((sub, si) => {
+          if ((sub.parttypes || []).some((pt) => pt.id === parttype.id)) {
+            oldCatIdx = ci;
+            oldSubIdx = si;
+          }
+          if (sub.id === newSubcategoryId) {
+            newCatIdx = ci;
+            newSubIdx = si;
+          }
+        });
+      });
+      if (
+        oldCatIdx === undefined ||
+        oldSubIdx === undefined ||
+        newCatIdx === undefined ||
+        newSubIdx === undefined
+      )
+        return prevCats;
+      let oldCat = { ...prevCats[oldCatIdx] };
+      let oldSub = { ...oldCat.subcategories[oldSubIdx] };
+      let newCat = { ...prevCats[newCatIdx] };
+      let newSub = { ...newCat.subcategories[newSubIdx] };
+      oldSub.parttypes = (oldSub.parttypes || []).filter((pt) => pt.id !== parttype.id);
+      newSub.parttypes = [
+        ...(newSub.parttypes || []),
+        { ...parttype, subcategory_id: newSubcategoryId },
+      ];
+      oldCat.subcategories[oldSubIdx] = oldSub;
+      newCat.subcategories[newSubIdx] = newSub;
+      let newCats = [...prevCats];
+      newCats[oldCatIdx] = oldCat;
+      newCats[newCatIdx] = newCat;
+      return newCats;
+    });
+
+    const { error } = await supabase
+      .from("parttypes")
+      .update({ subcategory_id: newSubcategoryId })
+      .eq("id", parttype.id);
+
+    if (error) {
+      toast.error("Failed to transfer part type");
+      setOptimisticCategories(null);
+      loadAllData();
+    } else {
+      // Refresh the main table (categories) after transfer
+      await loadCategories(0, true);
+      setOptimisticCategories(null); // clear optimistic state after real data loads
+    }
+  };
+
+  // Use optimisticCategories if set, else categories
+  const categoriesToRender = optimisticCategories || categories;
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
@@ -519,55 +768,56 @@ const Categories = () => {
             <>
               {/* Categories Tree View with Toggle */}
               <div>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center  justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900 sm:mb-0 mb-4">
-                    All Categories
-                  </h3>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={toggleExpandAll}
-                      className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${
-                        isAllExpanded
-                          ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                          : "bg-blue-50 text-blue-600 hover:bg-blue-100"
-                      }`}
-                    >
-                      {isAllExpanded ? (
-                        <>
-                          <ChevronRight className="w-4 h-4" />
-                          Collapse All
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="w-4 h-4" />
-                          Expand All
-                        </>
-                      )}
-                    </button>
-                    <button
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center justify-between mb-4">
+                  <div className="flex items-center gap-4">
+                    <h3 className="text-lg font-semibold text-gray-900">All Categories</h3>
+
+                   
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                   <button
                       onClick={() => handleOpenAddModal("category")}
-                      className="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 flex items-center gap-2"
+                      className="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 flex items-center gap-2 shadow"
                     >
                       <Plus className="w-4 h-4" /> Add Category
                     </button>
+                  <button
+                    onClick={toggleExpandAll}
+                    className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${
+                      isAllExpanded
+                        ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        : "bg-blue-50 text-blue-600 hover:bg-blue-100"
+                    }`}
+                  >
+                    {isAllExpanded ? (
+                      <>
+                        <ChevronRight className="w-4 h-4" />
+                        Collapse All
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4" />
+                        Expand All
+                      </>
+                    )}
+                  </button>
                   </div>
                 </div>
                 {categories.length > 0 ? (
                   <>
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="p-2 max-h-[600px] overflow-y-auto space-y-2">
-                        {categories.map((category) => {
-                          const categorySubcategories =
-                            category.subcategories || [];
-                          const isCategoryExpanded = expandedCategories.has(
-                            category.id
+                    <div className="border border-gray-200 rounded-lg overflow-hidden ">
+                      <div className="p-2 max-h-[600px] overflow-y-auto overflow-x-auto space-y-2">
+                        {categoriesToRender.map((category) => {
+                          const categorySubcategories = category.subcategories || [];
+                          const isCategoryExpanded = expandedCategories.has(category.id);
+
+                          // Only show subcategories not already in this category
+                          const availableSubcategories = allSubcategories.filter(
+                            (s) => s.category_id !== category.id
                           );
 
                           return (
-                            <div
-                              key={category.id}
-                              className="border border-gray-200 rounded-lg overflow-hidden"
-                            >
+                            <div key={category.id} className="border border-gray-200 rounded-lg overflow-hidden">
                               {/* Category Row */}
                               <div className="group bg-blue-50 hover:bg-blue-100 transition-colors">
                                 <div className="flex sm:items-center items-start justify-between py-2 px-1">
@@ -578,7 +828,7 @@ const Categories = () => {
                                       }
                                       className="p-1 hover:bg-blue-200 rounded transition-colors"
                                     >
-                                      {isCategoryExpanded ? (
+                                      {(isCategoryExpanded || openTransferDropdown === category.id) ? (
                                         <ChevronDown className="w-5 h-5 text-blue-700" />
                                       ) : (
                                         <ChevronRight className="w-5 h-5 text-blue-700" />
@@ -623,63 +873,78 @@ const Categories = () => {
                                     )}
                                   </div>
                                   {!(editingItem?.id === category.id) && (
-                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <button
-                                        onClick={() =>
-                                          handleEdit(category, "category")
-                                        }
-                                        className="p-2 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
-                                        title="Edit Category"
-                                      >
-                                        <Edit2 className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        onClick={() =>
-                                          handleDeleteClick(
-                                            category,
-                                            "category"
-                                          )
-                                        }
-                                        className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
-                                        title="Delete Categories"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        onClick={() =>
-                                          handleOpenAddModal(
-                                            "subcategory",
-                                            category.id,
-                                            null
-                                          )
-                                        }
-                                        className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
-                                        title="Add Subcategory"
-                                      >
-                                        <Plus className="w-4 h-4" />
-                                      </button>
-                                    </div>
+                                    <>
+                                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                          onClick={() =>
+                                            handleEdit(category, "category")
+                                          }
+                                          className="p-2 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
+                                          title="Edit Category"
+                                        >
+                                          <Edit2 className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            handleDeleteClick(
+                                              category,
+                                              "category"
+                                            )
+                                          }
+                                          className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                          title="Delete Categories"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            handleOpenAddModal(
+                                              "subcategory",
+                                              category.id,
+                                              null
+                                            )
+                                          }
+                                          className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                                          title="Add Subcategory"
+                                        >
+                                          <Plus className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                      <div className="ml-2">
+                                        <TransferDropdown
+                                          buttonLabel="Transfer Subcategory"
+                                          options={availableSubcategories}
+                                          onSelect={(subcat) => {
+                                            handleTransferSubcategory(subcat, category.id);
+                                            setOpenTransferDropdown(null);
+                                          }}
+                                          placeholder="No available subcategories"
+                                          width="w-52"
+                                          color="blue"
+                                          open={openTransferDropdown === category.id}
+                                          setOpen={(open) => setOpenTransferDropdown(open ? category.id : null)}
+                                        />
+                                      </div>
+                                    </>
                                   )}
                                 </div>
                               </div>
 
                               {/* Subcategories */}
-                              {isCategoryExpanded && (
+                              {(isCategoryExpanded || openTransferDropdown === category.id) && (
                                 <div className="bg-white">
                                   {categorySubcategories.length > 0 ? (
                                     categorySubcategories.map((subcategory) => {
-                                      const subcategoryParttypes =
-                                        subcategory.parttypes || [];
-                                      const isSubcategoryExpanded =
-                                        expandedSubcategories.has(
-                                          subcategory.id
-                                        );
+                                      const subcategoryParttypes = subcategory.parttypes || [];
+                                      const isSubcategoryExpanded = expandedSubcategories.has(subcategory.id);
+
+                                      // Only show parttypes not already in this subcategory
+                                      const availableParttypes = allParttypes.filter(
+                                        (pt) => pt.subcategory_id !== subcategory.id
+                                      );
 
                                       return (
-                                        <div
-                                          key={subcategory.id}
-                                          className="border-t border-gray-200"
-                                        >
+                                        <div key={subcategory.id} className="border-t border-gray-200">
                                           {/* Subcategory Row */}
                                           <div className="group bg-white hover:bg-gray-100 transition-colors">
                                             <div className="flex items-center justify-between p-3 pl-12">
@@ -783,6 +1048,16 @@ const Categories = () => {
                                                   >
                                                     <Plus className="w-4 h-4" />
                                                   </button>
+                                                  <TransferDropdown
+                                                    buttonLabel="Transfer Part Type"
+                                                    options={availableParttypes}
+                                                    onSelect={(pt) =>
+                                                      handleTransferPartType(pt, subcategory.id)
+                                                    }
+                                                    placeholder="No available part types"
+                                                    width="w-52"
+                                                    color="orange"
+                                                  />
                                                 </div>
                                               )}
                                             </div>
