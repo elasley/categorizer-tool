@@ -1,6 +1,10 @@
 // src/components/TaxonomyManager.jsx
 import React, { useState, useMemo } from "react";
 import { exportProductsToCSV } from "../utils/exportUtils";
+import { supabase } from "../config/supabase";
+import { generateEmbedding } from "../utils/embeddingGenerator";
+import { getCurrentUser } from "../utils/getCurrentUser";
+import toast from "react-hot-toast";
 import {
   BarChart3,
   X,
@@ -25,7 +29,54 @@ import {
   Download,
   Upload,
 } from "lucide-react";
+import LoadingSpinner from "./LoadingSpinner";
+// Move all imports to the top (ESLint import/first)
+// ...existing imports...
 
+// Helper: Get products for a selected node
+const getProductsForNode = (node, products) => {
+  if (!node) return [];
+  if (node.type === "category") {
+    return products.filter((p) => p.suggestedCategory === node.path);
+  } else if (node.type === "subcategory") {
+    const [cat, subcat] = node.path.split(" > ");
+    return products.filter(
+      (p) => p.suggestedCategory === cat && p.suggestedSubcategory === subcat
+    );
+  } else if (node.type === "partType") {
+    const [cat, subcat, partType] = node.path.split(" > ");
+    return products.filter(
+      (p) =>
+        p.suggestedCategory === cat &&
+        p.suggestedSubcategory === subcat &&
+        p.suggestedPartType === partType
+    );
+  }
+  return [];
+};
+
+// Helper: Toggle product selection in bulk edit mode
+function toggleProductSelection(
+  productId,
+  selectedProducts,
+  setSelectedProducts
+) {
+  setSelectedProducts((prev) => {
+    const newSet = new Set(prev);
+    if (newSet.has(productId)) {
+      newSet.delete(productId);
+    } else {
+      newSet.add(productId);
+    }
+    return newSet;
+  });
+}
+
+// Helper: Select all products for current node
+function selectAllProducts(selectedNode, products, setSelectedProducts) {
+  const nodeProducts = getProductsForNode(selectedNode, products);
+  setSelectedProducts(new Set(nodeProducts.map((p) => p.id)));
+}
 const TaxonomyManager = ({
   isOpen,
   onClose,
@@ -46,7 +97,7 @@ const TaxonomyManager = ({
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState(new Set());
   const [showOtherCategories, setShowOtherCategories] = useState(false);
-
+  const [loading, setLoading] = useState(false);
   const otherTaxonomy = useMemo(() => {
     // Create a map of successfully categorized products
     const successfullyCategorizedProducts = new Set();
@@ -135,7 +186,7 @@ const TaxonomyManager = ({
     };
 
     Object.entries(categories).forEach(([category, subcategories]) => {
-      if (!subcategories || typeof subcategories !== 'object') return;
+      if (!subcategories || typeof subcategories !== "object") return;
 
       stats.totalSubcategories += Object.keys(subcategories).length;
       stats.distribution[category] = {
@@ -348,7 +399,7 @@ const TaxonomyManager = ({
         category.toLowerCase().includes(searchTerm.toLowerCase());
 
       if (shouldIncludeCategory && categoryMatchesSearch) {
-        if (!subcategories || typeof subcategories !== 'object') return;
+        if (!subcategories || typeof subcategories !== "object") return;
 
         filtered[category] = {};
 
@@ -507,41 +558,107 @@ const TaxonomyManager = ({
     setNewNodeName("");
   };
 
-  const addNewItem = () => {
+  const addNewItem = async () => {
     if (!newNodeName.trim()) return;
-
-    const updatedCategories = JSON.parse(JSON.stringify(categories));
-
-    if (addDialogType === "category") {
-      if (!updatedCategories[newNodeName]) {
-        updatedCategories[newNodeName] = {};
+    try {
+      const user = await getCurrentUser();
+      if (!user) throw new Error("User not authenticated");
+      const user_id = user.id;
+      if (addDialogType === "category") {
+        // Generate embedding and insert category
+        const embedding = await generateEmbedding(newNodeName.trim());
+        const { data, error } = await supabase
+          .from("categories")
+          .insert({ name: newNodeName.trim(), embedding, user_id })
+          .select()
+          .single();
+        if (error) {
+          if (
+            error.code === "23505" ||
+            (typeof error.message === "string" &&
+              error.message.includes("duplicate key value") &&
+              error.message.includes("categories_name_key"))
+          ) {
+            toast.error("Category already exists");
+            return;
+          }
+          throw error;
+        }
+        toast.success("Category added");
+      } else if (addDialogType === "subcategory") {
+        // addDialogParent is category name, need to find its id
+        const { data: cat } = await supabase
+          .from("categories")
+          .select("id")
+          .eq("name", addDialogParent)
+          .single();
+        if (!cat) throw new Error("Parent category not found");
+        const text = `${addDialogParent} ${newNodeName.trim()}`;
+        const embedding = await generateEmbedding(text);
+        const { error } = await supabase.from("subcategories").insert({
+          name: newNodeName.trim(),
+          category_id: cat.id,
+          embedding,
+          user_id,
+        });
+        if (error) {
+          if (
+            error.code === "23505" ||
+            (typeof error.message === "string" &&
+              error.message.includes("duplicate key value") &&
+              error.message.includes("subcategories_name_key"))
+          ) {
+            toast.error("Subcategory already exists");
+            return;
+          }
+          throw error;
+        }
+        toast.success("Subcategory added");
+      } else if (addDialogType === "partType") {
+        // addDialogParent is "Category > Subcategory"
+        const [catName, subcatName] = addDialogParent.split(" > ");
+        // Find subcategory id
+        const { data: cat } = await supabase
+          .from("categories")
+          .select("id")
+          .eq("name", catName)
+          .single();
+        if (!cat) throw new Error("Parent category not found");
+        const { data: subcat } = await supabase
+          .from("subcategories")
+          .select("id")
+          .eq("name", subcatName)
+          .eq("category_id", cat.id)
+          .single();
+        if (!subcat) throw new Error("Parent subcategory not found");
+        const text = `${catName} ${subcatName} ${newNodeName.trim()}`;
+        const embedding = await generateEmbedding(text);
+        const { error } = await supabase.from("parttypes").insert({
+          name: newNodeName.trim(),
+          subcategory_id: subcat.id,
+          embedding,
+          user_id,
+        });
+        if (error) {
+          if (
+            error.code === "23505" ||
+            (typeof error.message === "string" &&
+              error.message.includes("duplicate key value") &&
+              error.message.includes("parttypes_name_key"))
+          ) {
+            toast.error("Part type already exists");
+            return;
+          }
+          throw error;
+        }
+        toast.success("Part type added");
       }
-    } else if (addDialogType === "subcategory") {
-      const category = addDialogParent;
-      // Defensive: ensure category exists
-      if (!updatedCategories[category]) {
-        updatedCategories[category] = {};
-      }
-      if (!updatedCategories[category][newNodeName]) {
-        updatedCategories[category][newNodeName] = [];
-      }
-    } else if (addDialogType === "partType") {
-      const [category, subcategory] = addDialogParent.split(" > ");
-      // Defensive: ensure structures exist
-      if (!updatedCategories[category]) {
-        updatedCategories[category] = {};
-      }
-      if (!Array.isArray(updatedCategories[category][subcategory])) {
-        updatedCategories[category][subcategory] = [];
-      }
-      if (!updatedCategories[category][subcategory].includes(newNodeName)) {
-        updatedCategories[category][subcategory].push(newNodeName);
-      }
+      setShowAddDialog(false);
+      setNewNodeName("");
+      // Optionally: reload categories from DB here
+    } catch (e) {
+      toast.error(e.message || "Failed to add");
     }
-
-    onUpdateCategories(updatedCategories);
-    setShowAddDialog(false);
-    setNewNodeName("");
   };
 
   // Delete items
@@ -569,80 +686,13 @@ const TaxonomyManager = ({
         updatedCategories[category] &&
         Array.isArray(updatedCategories[category][subcategory])
       ) {
-        const index =
-          updatedCategories[category][subcategory].indexOf(partType);
+        const partTypes = updatedCategories[category][subcategory];
+        const index = partTypes.indexOf(partType);
         if (index !== -1) {
-          updatedCategories[category][subcategory].splice(index, 1);
+          partTypes.splice(index, 1);
         }
       }
     }
-
-    onUpdateCategories(updatedCategories);
-  };
-
-  // Product selection for bulk operations
-  const toggleProductSelection = (productId) => {
-    const newSelected = new Set(selectedProducts);
-    if (newSelected.has(productId)) {
-      newSelected.delete(productId);
-    } else {
-      newSelected.add(productId);
-    }
-    setSelectedProducts(newSelected);
-  };
-
-  const selectAllProducts = () => {
-    if (selectedNode) {
-      const nodeProducts = getProductsForNode(selectedNode);
-      const newSelected = new Set(selectedProducts);
-      nodeProducts.forEach((p) => newSelected.add(p.id));
-      setSelectedProducts(newSelected);
-    }
-  };
-
-  // Get products for a specific node
-  const getProductsForNode = (node) => {
-    if (!node) return [];
-
-    const { type, path } = node;
-    const pathParts = path.split(" > ");
-
-    return products.filter((product) => {
-      if (type === "category") {
-        return product.suggestedCategory === pathParts[0];
-      } else if (type === "subcategory") {
-        return (
-          product.suggestedCategory === pathParts[0] &&
-          product.suggestedSubcategory === pathParts[1]
-        );
-      } else if (type === "partType") {
-        return (
-          product.suggestedCategory === pathParts[0] &&
-          product.suggestedSubcategory === pathParts[1] &&
-          product.suggestedPartType === pathParts[2]
-        );
-      }
-      return false;
-    });
-  };
-
-  // Export taxonomy as JSON (legacy)
-  const exportTaxonomy = () => {
-    const taxonomyData = {
-      categories,
-      stats: taxonomyStats,
-      exportDate: new Date().toISOString(),
-      version: "1.0",
-    };
-    const blob = new Blob([JSON.stringify(taxonomyData, null, 2)], {
-      type: "application/json",
-    });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `taxonomy-${new Date().toISOString().split("T")[0]}.json`;
-    a.click();
-    window.URL.revokeObjectURL(url);
   };
   const exportProductsToCSV = (products, categories) => {
     const csvRows = [];
@@ -797,6 +847,7 @@ const TaxonomyManager = ({
 
             <div className="flex items-center space-x-3">
               {/* Add New Category */}
+              {}{" "}
               <button
                 onClick={() => showAddItemDialog("category")}
                 className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm flex items-center space-x-2"
@@ -804,7 +855,6 @@ const TaxonomyManager = ({
                 <Plus className="h-4 w-4" />
                 <span>Add Category</span>
               </button>
-
               {/* Bulk Edit Toggle */}
               <button
                 onClick={() => setBulkEditMode(!bulkEditMode)}
@@ -817,7 +867,6 @@ const TaxonomyManager = ({
                 <Users className="h-4 w-4" />
                 <span>{bulkEditMode ? "Exit Bulk Edit" : "Bulk Edit"}</span>
               </button>
-
               {/* Toggle Other Categories */}
               <button
                 onClick={handleToggleOtherCategories}
@@ -868,11 +917,19 @@ const TaxonomyManager = ({
           <div className="w-1/2 overflow-y-auto">
             <ProductDetails
               selectedNode={selectedNode}
-              products={getProductsForNode(selectedNode)}
+              products={getProductsForNode(selectedNode, products)}
               bulkEditMode={bulkEditMode}
               selectedProducts={selectedProducts}
-              onToggleProductSelection={toggleProductSelection}
-              onSelectAllProducts={selectAllProducts}
+              onToggleProductSelection={(productId) =>
+                toggleProductSelection(
+                  productId,
+                  selectedProducts,
+                  setSelectedProducts
+                )
+              }
+              onSelectAllProducts={() =>
+                selectAllProducts(selectedNode, products, setSelectedProducts)
+              }
               onUpdateProducts={onUpdateProducts}
               categories={categories}
             />

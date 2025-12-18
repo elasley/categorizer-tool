@@ -181,9 +181,6 @@ const AcesPiesCategorizationTool = () => {
   // Save categories to Supabase with relational structure and NLP embeddings
   const saveCategoriesWithEmbeddings = async (categoriesData) => {
     dispatch(setReduxUploadingCategories(true));
-    const loadingToast = toast.loading(
-      "🚀 Starting category upload with vector embeddings..."
-    );
 
     try {
       console.log("\n═══════════════════════════════════════════════════");
@@ -200,9 +197,6 @@ const AcesPiesCategorizationTool = () => {
       console.log(
         `📁 Step 1: Checking ${uniqueCategories.length} categories...`
       );
-      toast.loading(`📁 Checking ${uniqueCategories.length} categories...`, {
-        id: loadingToast,
-      });
 
       // Fetch existing categories
       const { data: existingCategories, error: fetchCatError } = await supabase
@@ -235,10 +229,6 @@ const AcesPiesCategorizationTool = () => {
       let insertedCategories = [];
       if (newCategories.length > 0) {
         console.log(`\n📁 Inserting ${newCategories.length} new categories...`);
-        toast.loading(
-          `📁 Inserting ${newCategories.length} new categories...`,
-          { id: loadingToast }
-        );
 
         const categoriesWithEmbeddings = await Promise.all(
           newCategories.map(async (categoryName) => {
@@ -276,18 +266,9 @@ const AcesPiesCategorizationTool = () => {
       console.log(
         `\n✅ Step 1 Complete: ${existingCategories.length} existing + ${insertedCategories.length} new = ${categoryMap.size} total categories\n`
       );
-      toast.loading(
-        `✅ Categories ready (${existingCategories.length} existing, ${insertedCategories.length} new), processing subcategories...`,
-        {
-          id: loadingToast,
-        }
-      );
 
       // Step 2: Check existing subcategories and insert only new ones
       console.log(`📂 Step 2: Checking subcategories...`);
-      toast.loading(`📂 Checking subcategories...`, {
-        id: loadingToast,
-      });
 
       // Get all category IDs to fetch their subcategories
       const categoryIds = Array.from(categoryMap.values());
@@ -348,10 +329,6 @@ const AcesPiesCategorizationTool = () => {
         console.log(
           `\n📂 Inserting ${subcategoriesWithEmbeddings.length} new subcategories...`
         );
-        toast.loading(
-          `📂 Inserting ${subcategoriesWithEmbeddings.length} new subcategories...`,
-          { id: loadingToast }
-        );
 
         const { data, error: subError } = await supabase
           .from("subcategories")
@@ -376,16 +353,9 @@ const AcesPiesCategorizationTool = () => {
       console.log(
         `\n✅ Step 2 Complete: ${existingSubcategories.length} existing + ${insertedSubcategories.length} new = ${subcategoryMap.size} total subcategories\n`
       );
-      toast.loading(
-        `✅ Subcategories ready (${existingSubcategories.length} existing, ${insertedSubcategories.length} new), processing part types...`,
-        { id: loadingToast }
-      );
 
       // Step 3: Check existing part types and insert only new ones
       console.log(`🏷️  Step 3: Checking part types...`);
-      toast.loading(`🏷️  Checking part types...`, {
-        id: loadingToast,
-      });
 
       // Get all subcategory IDs to fetch their part types
       const subcategoryIds = Array.from(subcategoryMap.values());
@@ -456,10 +426,6 @@ const AcesPiesCategorizationTool = () => {
         console.log(
           `\n🏷️  Inserting ${parttypesWithEmbeddings.length} new part types...`
         );
-        toast.loading(
-          `🏷️  Inserting ${parttypesWithEmbeddings.length} new part types...`,
-          { id: loadingToast }
-        );
 
         const { data, error: ptError } = await supabase
           .from("parttypes")
@@ -497,17 +463,10 @@ const AcesPiesCategorizationTool = () => {
         existingParttypes.length;
       toast.success(
         totalInserted > 0
-          ? `✅ Added ${totalInserted} new items!\n📁 ${
-              insertedCategories.length
-            } categories | 📂 ${
-              insertedSubcategories.length
-            } subcategories | 🏷️ ${insertedParttypes.length} part types\n${
-              existingCount > 0
-                ? `(${existingCount} items already existed)`
-                : ""
+          ? ` Added ${totalInserted} new items!
             }`
-          : `✅ All items already exist in database!\n📁 ${existingCategories.length} categories | 📂 ${existingSubcategories.length} subcategories | 🏷️ ${existingParttypes.length} part types`,
-        { id: loadingToast, duration: 5000 }
+          : ` All items already exist in database!`,
+        { duration: 5000 }
       );
 
       // Clear only the upload button state, but keep the header visible
@@ -527,9 +486,7 @@ const AcesPiesCategorizationTool = () => {
       setLastUploadType(null);
     } catch (error) {
       console.error("Error saving categories:", error);
-      toast.error(`Failed to save categories: ${error.message}`, {
-        id: loadingToast,
-      });
+      toast.error(`Failed to save categories: ${error.message}`);
     } finally {
       dispatch(setReduxUploadingCategories(false));
     }
@@ -1281,7 +1238,6 @@ const AcesPiesCategorizationTool = () => {
 
   // Diagnostic function to check database
   const checkSupabaseData = async () => {
-    const loadingToast = toast.loading("Checking Supabase data...");
     try {
       const { data: cats, error: catErr } = await supabase
         .from("categories")
@@ -1296,7 +1252,7 @@ const AcesPiesCategorizationTool = () => {
         .select("id, name, subcategory_id, embedding");
 
       if (catErr || subErr || ptErr) {
-        toast.error("Error checking database", { id: loadingToast });
+        toast.error("Error checking database");
         console.error("Database Errors:", { catErr, subErr, ptErr });
         return;
       }
@@ -1347,7 +1303,7 @@ const AcesPiesCategorizationTool = () => {
       if (cats?.length === 0) {
         toast.error(
           "No categories found! Please upload categories first using the 'Upload to Supabase' button.",
-          { id: loadingToast, duration: 6000 }
+          { duration: 6000 }
         );
         return;
       }
@@ -1361,11 +1317,11 @@ const AcesPiesCategorizationTool = () => {
           }/${subs?.length || 0} subs, ${ptsWithEmbedding.length}/${
             pts?.length || 0
           } pts`,
-        { id: loadingToast, duration: 5000 }
+        { duration: 5000 }
       );
     } catch (error) {
       console.error("Error checking database:", error);
-      toast.error(`Failed: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed: ${error.message}`);
     }
   };
 
