@@ -154,8 +154,6 @@ const ReportsPage = () => {
     fetchReports(nextPage, true, "");
   };
 
-
-
   // Download file
   const downloadFile = async (fileUrl, fileName) => {
     try {
@@ -188,8 +186,6 @@ const ReportsPage = () => {
     const encodedUrl = encodeURIComponent(fileUrl);
     navigate(`/products-view/${encodedUrl}`);
   };
-
-
 
   if (loading && !searching) {
     return (
@@ -284,7 +280,7 @@ const ReportsPage = () => {
                   Total Uploads
                 </p>
                 <p className="text-3xl font-bold text-gray-800 mt-1">
-                  {reports.length}
+                  {totalCount}
                 </p>
               </div>
               <div className="bg-blue-100 p-3 rounded-xl">
@@ -549,7 +545,7 @@ const ReportsPage = () => {
                   ))}
                 </tbody>
               </table>
-              
+
               {/* Infinite scroll trigger */}
               {hasMore && !search && (
                 <div ref={observerTarget} className="p-0 m-0">
@@ -570,8 +566,6 @@ const ReportsPage = () => {
             </div>
           )}
         </div>
-
-
       </div>
     </div>
   );
