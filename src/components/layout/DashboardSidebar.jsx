@@ -15,6 +15,7 @@ import {
   Layers,
   Box,
   Network,
+  X,
 } from "lucide-react";
 
 const DashboardSidebar = ({ isOpen, onClose }) => {
@@ -77,11 +78,21 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
 
       {/* Sidebar */}
       <aside
-        className={`fixed lg:sticky top-0 left-0  bg-white border-r border-gray-200 transition-transform duration-300 z-40 ${
+        className={`fixed lg:sticky top-15 left-0  bg-white border-r border-gray-200 transition-transform duration-300 z-40 ${
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         } w-64 lg:w-72`}
       >
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-[100dvh]">
+          {/* Close Button for Mobile Sidebar */}
+          {isOpen && (
+            <button
+              className="absolute top-1 right-4 z-50 lg:hidden p-2 rounded-full hover:bg-gray-100 transition-colors"
+              onClick={onClose}
+              aria-label="Close sidebar"
+            >
+              <X className="w-5 h-5 text-gray-600" />
+            </button>
+          )}
           {/* Sidebar Header */}
           {/* <div className="p-6 border-b border-gray-200">
             <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -93,9 +104,9 @@ const DashboardSidebar = ({ isOpen, onClose }) => {
           </div> */}
 
           {/* Navigation */}
-          <nav className="flex-1 overflow-y-auto   p-4">
+          <nav className="flex-1  overflow-y-auto p-4 ">
             {menuItems.map((section, idx) => (
-              <div key={idx} className="mb-6">
+              <div key={idx} className="mb-4">
                 <h3 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   {section.title}
                 </h3>
