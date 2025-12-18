@@ -18,6 +18,7 @@ import {
   Plus,
   Save,
   Search,
+  Move,
 } from "lucide-react";
 import LoadingSpinner from "../../components/LoadingSpinner";
 import { AnimatePresence, m, motion } from "framer-motion"; // Add for animation
@@ -36,34 +37,81 @@ const TransferDropdown = ({
   setOpen,
 }) => {
   const [search, setSearch] = useState("");
+
+  // Clear search when dropdown closes
+  useEffect(() => {
+    if (!open) {
+      setSearch("");
+    }
+  }, [open]);
   const buttonRef = useRef(null);
+  const dropdownRef = useRef(null);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0, right: 50, width: 0 });
 
   useEffect(() => {
     if (open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const dropdownHeight = 256; // max-h-64 = 256px
+      
+      // Calculate position based on button's position in viewport
+      let top, positioning;
+      
+      // If button is in bottom 30% of screen, show dropdown above
+      if (rect.bottom > viewportHeight * 0.7) {
+        top = rect.top - dropdownHeight - 4;
+        positioning = 'above';
+      }
+      // If button is in top 30% of screen, show dropdown below
+      else if (rect.top < viewportHeight * 0.3) {
+        top = rect.bottom + 4;
+        positioning = 'below';
+      }
+      // If button is in middle, center the dropdown on the button
+      else {
+        top = rect.top - (dropdownHeight / 2) + (rect.height / 2);
+        positioning = 'center';
+      }
+      
+      // Ensure dropdown doesn't go off-screen
+      if (top < 10) top = 10;
+      if (top + dropdownHeight > viewportHeight - 10) {
+        top = viewportHeight - dropdownHeight - 10;
+      }
+      
       setMenuPos({
-        top: rect.bottom + window.scrollY + 4,
-        left: rect.left + rect.width / 2 + window.scrollX,
+        top: top,
+        left: rect.right - 256, // Position dropdown to the right edge of button minus dropdown width
         width: rect.width,
+        positioning: positioning,
       });
     }
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    const handleClick = (e) => {
+    
+    const handleClickOutside = (e) => {
       if (
         buttonRef.current &&
         !buttonRef.current.contains(e.target) &&
-        !document.getElementById("transfer-dropdown-menu")?.contains(e.target)
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target)
       ) {
         setOpen(false);
       }
     };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+
+    // Add a small delay to prevent immediate closing when clicking the button
+    const timeoutId = setTimeout(() => {
+      document.addEventListener("click", handleClickOutside);
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [open, setOpen]);
 
   const filtered = options.filter((opt) =>
     opt.name.toLowerCase().includes(search.toLowerCase())
@@ -77,16 +125,29 @@ const TransferDropdown = ({
       : "focus:ring-purple-500";
 
 
-  const dropdownPanel = open ? (
+  const dropdownPanel = open ? ReactDOM.createPortal(
     <AnimatePresence>
       <motion.div
+        ref={dropdownRef}
         id="transfer-dropdown-menu"
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 8 }}
+        initial={{ 
+          opacity: 0, 
+          y: menuPos.positioning === 'above' ? -8 : menuPos.positioning === 'center' ? 0 : 8,
+          scale: 0.95
+        }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ 
+          opacity: 0, 
+          y: menuPos.positioning === 'above' ? -8 : menuPos.positioning === 'center' ? 0 : 8,
+          scale: 0.95
+        }}
         transition={{ duration: 0.18 }}
-        className={`absolute left-0 mt-2 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto ${width}`}
-        style={{ zIndex: 100 }}
+        className="fixed w-64 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto"
+        style={{ 
+          zIndex: 1000,
+          top: menuPos.top,
+          left: menuPos.left,
+        }}
       >
         <div className="sticky top-0 bg-white z-10 px-3 py-2 border-b border-gray-100 flex items-center gap-2">
           <Search className="w-4 h-4 text-gray-400" />
@@ -116,23 +177,27 @@ const TransferDropdown = ({
           ))
         )}
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   ) : null;
 
   return (
-    <div className="relative inline-block">
+    <>
       <button
         ref={buttonRef}
         type="button"
-        className={`flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg shadow hover:bg-gray-50 transition ${width} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-        onClick={() => !disabled && setOpen(!open)}
+        className={`p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!disabled) setOpen(!open);
+        }}
         disabled={disabled}
+        title="Move to another category"
       >
         {buttonLabel}
-        <ChevronDown className="w-4 h-4 ml-auto text-gray-500" />
       </button>
       {dropdownPanel}
-    </div>
+    </>
   );
 };
 
@@ -179,6 +244,8 @@ const Categories = () => {
   const [allParttypes, setAllParttypes] = useState([]);
   // Track which category's TransferDropdown is open
   const [openTransferDropdown, setOpenTransferDropdown] = useState(null);
+  // Track which subcategory's part type TransferDropdown is open
+  const [openPartTypeTransferDropdown, setOpenPartTypeTransferDropdown] = useState(null);
 
   const handleOpenAddModal = (
     type,
@@ -828,7 +895,7 @@ const Categories = () => {
                                       }
                                       className="p-1 hover:bg-blue-200 rounded transition-colors"
                                     >
-                                      {(isCategoryExpanded || openTransferDropdown === category.id) ? (
+                                      {isCategoryExpanded ? (
                                         <ChevronDown className="w-5 h-5 text-blue-700" />
                                       ) : (
                                         <ChevronRight className="w-5 h-5 text-blue-700" />
@@ -909,17 +976,14 @@ const Categories = () => {
                                         >
                                           <Plus className="w-4 h-4" />
                                         </button>
-                                      </div>
-                                      <div className="ml-2">
                                         <TransferDropdown
-                                          buttonLabel="Transfer Subcategory"
+                                          buttonLabel={<Move className="w-4 h-4" />}
                                           options={availableSubcategories}
                                           onSelect={(subcat) => {
                                             handleTransferSubcategory(subcat, category.id);
                                             setOpenTransferDropdown(null);
                                           }}
                                           placeholder="No available subcategories"
-                                          width="w-52"
                                           color="blue"
                                           open={openTransferDropdown === category.id}
                                           setOpen={(open) => setOpenTransferDropdown(open ? category.id : null)}
@@ -931,7 +995,7 @@ const Categories = () => {
                               </div>
 
                               {/* Subcategories */}
-                              {(isCategoryExpanded || openTransferDropdown === category.id) && (
+                              {isCategoryExpanded && (
                                 <div className="bg-white">
                                   {categorySubcategories.length > 0 ? (
                                     categorySubcategories.map((subcategory) => {
@@ -1049,14 +1113,16 @@ const Categories = () => {
                                                     <Plus className="w-4 h-4" />
                                                   </button>
                                                   <TransferDropdown
-                                                    buttonLabel="Transfer Part Type"
+                                                    buttonLabel={<Move className="w-4 h-4" />}
                                                     options={availableParttypes}
-                                                    onSelect={(pt) =>
-                                                      handleTransferPartType(pt, subcategory.id)
-                                                    }
+                                                    onSelect={(pt) => {
+                                                      handleTransferPartType(pt, subcategory.id);
+                                                      setOpenPartTypeTransferDropdown(null);
+                                                    }}
                                                     placeholder="No available part types"
-                                                    width="w-52"
                                                     color="orange"
+                                                    open={openPartTypeTransferDropdown === subcategory.id}
+                                                    setOpen={(open) => setOpenPartTypeTransferDropdown(open ? subcategory.id : null)}
                                                   />
                                                 </div>
                                               )}
