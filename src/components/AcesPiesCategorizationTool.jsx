@@ -969,12 +969,7 @@ const AcesPiesCategorizationTool = () => {
         );
         const realErrors = errors.filter((e) => !e.includes("auto-corrected"));
 
-        toast.success(
-          `Successfully uploaded ${successCount} products!${
-            errorCount > 0 ? ` (${errorCount} failed)` : ""
-          }`,
-          { duration: 5000 }
-        );
+        toast.success(`Successfully uploaded  products!`, { duration: 5000 });
 
         // Show warning about auto-corrections
         if (autoCorrections.length > 0) {
