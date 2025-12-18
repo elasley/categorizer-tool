@@ -60,7 +60,8 @@ const SubcategoriesPage = () => {
         `,
           { count: "exact" }
         )
-        .order("name")
+        .order("created_at", { ascending: false }) // ✅ PRIMARY SORT
+        .order("name", { ascending: true })
         .range(0, BATCH_SIZE - 1);
 
       if (user?.id) {

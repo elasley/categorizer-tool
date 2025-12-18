@@ -42,7 +42,8 @@ const CategoriesPage = () => {
       let query = supabase
         .from("categories")
         .select("*", { count: "exact" })
-        .order("name")
+        .order("created_at", { ascending: false })
+        .order("name", { ascending: true })
         .range(0, BATCH_SIZE - 1);
 
       if (user?.id) {
@@ -190,8 +191,9 @@ const CategoriesPage = () => {
       const embedding = await generateEmbedding(formData.name);
       const { error } = await supabase
         .from("categories")
-        .insert({ name: formData.name, embedding, user_id: user?.id });
-
+        .insert({ name: formData.name, embedding, user_id: user?.id })
+        .select()
+        .single();
       if (error) throw error;
 
       toast.success("Category added successfully!");

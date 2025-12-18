@@ -210,6 +210,7 @@ const Categories = () => {
           )
         `
         )
+        .order("created_at", { ascending: false }) // 🔥 newest first
         .order("name", { ascending: true })
         .range(from, to);
 
