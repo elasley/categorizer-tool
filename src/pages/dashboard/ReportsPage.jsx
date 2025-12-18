@@ -284,7 +284,7 @@ const ReportsPage = () => {
                   Total Uploads
                 </p>
                 <p className="text-3xl font-bold text-gray-800 mt-1">
-                  {reports.length}
+                  {totalCount}
                 </p>
               </div>
               <div className="bg-blue-100 p-3 rounded-xl">

@@ -102,14 +102,29 @@ const TransferDropdown = ({
       }
     };
 
+    // Handle scroll to close dropdown when button goes off-screen
+    const handleScroll = () => {
+      if (!buttonRef.current) return;
+      
+      const rect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      
+      // Close dropdown if button is completely off-screen (with some buffer)
+      if (rect.bottom < -50 || rect.top > viewportHeight + 50) {
+        setOpen(false);
+      }
+    };
+
     // Add a small delay to prevent immediate closing when clicking the button
     const timeoutId = setTimeout(() => {
       document.addEventListener("click", handleClickOutside);
+      document.addEventListener("scroll", handleScroll, true); // Use capture phase for better performance
     }, 100);
 
     return () => {
       clearTimeout(timeoutId);
       document.removeEventListener("click", handleClickOutside);
+      document.removeEventListener("scroll", handleScroll, true);
     };
   }, [open, setOpen]);
 
