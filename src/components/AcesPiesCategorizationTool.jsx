@@ -568,7 +568,6 @@ const AcesPiesCategorizationTool = () => {
     console.log("Upload metadata:", uploadMetadata);
 
     dispatch(setReduxUploadingProducts(true));
-    const loadingToast = toast.loading("Uploading products to Supabase...");
 
     let uploadHistoryId = null;
     let fileUrl = null;
@@ -606,30 +605,26 @@ const AcesPiesCategorizationTool = () => {
         ? uploadMetadata.fileName
         : `${uploadMetadata.fileName}.csv`;
 
-      // Step 2: Upload file to Supabase Storage
-      toast.loading("Uploading file to storage...", { id: loadingToast });
+      // OPTIMIZED: Run file upload and user fetch in parallel
       const filePath = `${Date.now()}-${fileName}`;
 
-      const { data: fileData, error: fileError } = await supabase.storage
-        .from("product-uploads")
-        .upload(filePath, blob, {
+      const [fileResult, userResult] = await Promise.all([
+        supabase.storage.from("product-uploads").upload(filePath, blob, {
           contentType: "text/csv",
           upsert: false,
-        });
+        }),
+        supabase.auth.getUser(),
+      ]);
 
-      if (fileError)
-        throw new Error(`File upload failed: ${fileError.message}`);
+      if (fileResult.error)
+        throw new Error(`File upload failed: ${fileResult.error.message}`);
 
       fileUrl = filePath;
       console.log("✅ File uploaded to storage:", fileUrl);
 
-      // Step 3: Get current user
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const user = userResult.data?.user;
 
-      // Step 4: Create upload history record
-      toast.loading("Creating upload record...", { id: loadingToast });
+      // Create upload history record
       const { data: historyData, error: historyError } = await supabase
         .from("upload_history")
         .insert({
@@ -650,62 +645,120 @@ const AcesPiesCategorizationTool = () => {
       console.log("✅ Upload history created:", uploadHistoryId);
 
       // Step 5: Upload products to database
-      toast.loading("Uploading products to database...", { id: loadingToast });
 
-      // OPTIMIZATION: Load ALL categories, subcategories, and parttypes ONCE
-      console.log("📥 Loading category mappings...");
-      const [categoriesResult, subcategoriesResult, parttypesResult] =
-        await Promise.all([
-          supabase.from("categories").select("id, name"),
-          supabase.from("subcategories").select("id, name, category_id"),
-          supabase.from("parttypes").select("id, name, subcategory_id"),
-        ]);
+      // ULTRA-OPTIMIZED: Load ALL data in ONE query using nested foreign key relations
+      console.log("📥 Loading category mappings with nested relations...");
 
-      if (
-        categoriesResult.error ||
-        subcategoriesResult.error ||
-        parttypesResult.error
-      ) {
-        throw new Error("Failed to load category mappings");
+      const { data: categoriesData, error: categoriesError } =
+        await supabase.from("categories").select(`
+          id,
+          name,
+          subcategories (
+            id,
+            name,
+            category_id,
+            parttypes (
+              id,
+              name,
+              subcategory_id
+            )
+          )
+        `);
+
+      if (categoriesError) {
+        throw new Error(
+          `Failed to load category mappings: ${categoriesError.message}`
+        );
       }
 
-      // Create lookup maps with both exact and fuzzy matching capabilities
-      const categoryMap = new Map(
-        categoriesResult.data.map((c) => [c.name.toLowerCase(), c])
-      );
-      const subcategoryMap = new Map(
-        subcategoriesResult.data.map((s) => [
-          `${s.category_id}|${s.name.toLowerCase()}`,
-          s,
-        ])
-      );
-      const parttypeMap = new Map(
-        parttypesResult.data.map((p) => [
-          `${p.subcategory_id}|${p.name.toLowerCase()}`,
-          p,
-        ])
-      );
-
-      // Create arrays for fuzzy matching
-      const allCategoryNames = categoriesResult.data.map((c) => c.name);
+      // Flatten the nested structure into lookup maps for O(1) access
+      const categoryMap = new Map();
+      const subcategoryMap = new Map();
+      const parttypeMap = new Map();
+      const allCategoryNames = [];
       const subcategoriesByCategory = {};
-      subcategoriesResult.data.forEach((s) => {
-        if (!subcategoriesByCategory[s.category_id]) {
-          subcategoriesByCategory[s.category_id] = [];
-        }
-        subcategoriesByCategory[s.category_id].push(s.name);
-      });
       const parttypesBySubcategory = {};
-      parttypesResult.data.forEach((p) => {
-        if (!parttypesBySubcategory[p.subcategory_id]) {
-          parttypesBySubcategory[p.subcategory_id] = [];
+
+      categoriesData.forEach((category) => {
+        // Map category
+        categoryMap.set(category.name.toLowerCase(), {
+          id: category.id,
+          name: category.name,
+        });
+        allCategoryNames.push(category.name);
+
+        // Initialize subcategories array for this category
+        subcategoriesByCategory[category.id] = [];
+
+        // Map subcategories and parttypes
+        if (category.subcategories) {
+          category.subcategories.forEach((subcategory) => {
+            subcategoryMap.set(
+              `${subcategory.category_id}|${subcategory.name.toLowerCase()}`,
+              subcategory
+            );
+            subcategoriesByCategory[category.id].push(subcategory.name);
+
+            // Initialize parttypes array for this subcategory
+            parttypesBySubcategory[subcategory.id] = [];
+
+            // Map parttypes
+            if (subcategory.parttypes) {
+              subcategory.parttypes.forEach((parttype) => {
+                parttypeMap.set(
+                  `${parttype.subcategory_id}|${parttype.name.toLowerCase()}`,
+                  parttype
+                );
+                parttypesBySubcategory[subcategory.id].push(parttype.name);
+              });
+            }
+          });
         }
-        parttypesBySubcategory[p.subcategory_id].push(p.name);
       });
 
       console.log(
-        `✅ Loaded ${categoryMap.size} categories, ${subcategoryMap.size} subcategories, ${parttypeMap.size} parttypes`
+        `✅ Loaded ${categoryMap.size} categories, ${subcategoryMap.size} subcategories, ${parttypeMap.size} parttypes in ONE query`
       );
+
+      // ULTRA-FAST: Generate ALL embeddings in parallel chunks
+      console.log("🔄 Generating embeddings in parallel chunks...");
+
+      const productsWithText = products
+        .map((p) => {
+          const productName =
+            p.name || p.productName || p.title || `Product-${Date.now()}`;
+          const text = `${productName} ${p.description || ""}`.trim();
+          return { product: p, productName, text };
+        })
+        .filter((item) => item.text && item.productName.trim() !== "");
+
+      // Process embeddings in chunks of 10 for optimal parallel processing
+      const CHUNK_SIZE = 20;
+      const chunks = [];
+      for (let i = 0; i < productsWithText.length; i += CHUNK_SIZE) {
+        chunks.push(productsWithText.slice(i, i + CHUNK_SIZE));
+      }
+
+      const bulkEmbeddings = [];
+      for (const chunk of chunks) {
+        const chunkResults = await Promise.all(
+          chunk.map(async (item) => {
+            try {
+              const embedding = await generateEmbedding(item.text);
+              return {
+                ...item,
+                embedding,
+                embeddingStr: `[${embedding.join(",")}]`,
+              };
+            } catch (error) {
+              return { ...item, embedding: null, embeddingStr: null };
+            }
+          })
+        );
+        bulkEmbeddings.push(...chunkResults);
+      }
+
+      console.log(`✅ Generated ${bulkEmbeddings.length} embeddings`);
 
       let successCount = 0;
       let errorCount = 0;
@@ -713,33 +766,14 @@ const AcesPiesCategorizationTool = () => {
       const productsToInsert = [];
 
       // Build bulk insert array with ID lookups
-      for (const product of products) {
-        // Get product name - MUST NOT BE NULL
-        const productName =
-          product.name ||
-          product.productName ||
-          product.title ||
-          `Product-${Date.now()}`;
+      for (const item of bulkEmbeddings) {
+        const { product, productName, embeddingStr } = item;
 
-        // Skip if essential data is missing
-        if (!productName || productName.trim() === "") {
-          console.warn("Skipping product with no name:", product);
+        if (!embeddingStr) {
           errorCount++;
-          errors.push("Product has no name");
+          errors.push(`Failed to generate embedding for ${productName}`);
           continue;
         }
-
-        // Generate embedding for product
-        const text = `${productName} ${product.description || ""}`.trim();
-        // Ensure text is a string
-        if (typeof text !== "string" || !text) {
-          console.warn(`Invalid text for embedding: ${productName}`);
-          errorCount++;
-          errors.push(`Invalid product data: ${productName}`);
-          continue;
-        }
-        const embedding = await generateEmbedding(text);
-        const embeddingStr = `[${embedding.join(",")}]`;
 
         // Find category, subcategory, and parttype IDs using maps (O(1) lookups)
         const categoryName = (
@@ -771,19 +805,13 @@ const AcesPiesCategorizationTool = () => {
           if (closestCategory) {
             category = categoryMap.get(closestCategory.toLowerCase());
             actualCategoryName = closestCategory;
-            console.warn(
-              `📝 Category fuzzy matched: "${categoryName}" → "${closestCategory}" for product: ${productName}`
-            );
           }
         }
 
         if (!category) {
           // Fallback to first category to prevent upload failure
-          category = categoriesResult.data[0];
+          category = { id: categoriesData[0].id, name: categoriesData[0].name };
           actualCategoryName = category.name;
-          console.warn(
-            `⚠️ Category not found: "${categoryName}". Using fallback "${actualCategoryName}" for product: ${productName}`
-          );
           errors.push(
             `Category auto-corrected: "${categoryName}" → "${actualCategoryName}" for ${productName}`
           );
@@ -807,23 +835,16 @@ const AcesPiesCategorizationTool = () => {
               `${category.id}|${closestSubcategory.toLowerCase()}`
             );
             actualSubcategoryName = closestSubcategory;
-            console.warn(
-              `📝 Subcategory fuzzy matched: "${subcategoryName}" → "${closestSubcategory}" in "${actualCategoryName}" for product: ${productName}`
-            );
           }
         }
 
         if (!subcategory) {
           // Fallback to first subcategory in this category
-          const availableSubcats = subcategoriesResult.data.filter(
-            (s) => s.category_id === category.id
-          );
+          const categoryData = categoriesData.find((c) => c.id === category.id);
+          const availableSubcats = categoryData?.subcategories || [];
           if (availableSubcats.length > 0) {
             subcategory = availableSubcats[0];
             actualSubcategoryName = subcategory.name;
-            console.warn(
-              `⚠️ Subcategory not found: "${subcategoryName}" in "${actualCategoryName}". Using fallback "${actualSubcategoryName}" for product: ${productName}`
-            );
             errors.push(
               `Subcategory auto-corrected: "${subcategoryName}" → "${actualSubcategoryName}" for ${productName}`
             );
@@ -853,23 +874,19 @@ const AcesPiesCategorizationTool = () => {
               `${subcategory.id}|${closestParttype.toLowerCase()}`
             );
             actualParttypeName = closestParttype;
-            console.warn(
-              `📝 Parttype fuzzy matched: "${parttypeName}" → "${closestParttype}" in "${actualSubcategoryName}" for product: ${productName}`
-            );
           }
         }
 
         if (!parttype) {
           // Fallback to first parttype in this subcategory
-          const availableParttypes = parttypesResult.data.filter(
-            (p) => p.subcategory_id === subcategory.id
+          const categoryData = categoriesData.find((c) => c.id === category.id);
+          const subcategoryData = categoryData?.subcategories?.find(
+            (s) => s.id === subcategory.id
           );
+          const availableParttypes = subcategoryData?.parttypes || [];
           if (availableParttypes.length > 0) {
             parttype = availableParttypes[0];
             actualParttypeName = parttype.name;
-            console.warn(
-              `⚠️ Parttype not found: "${parttypeName}" in "${actualSubcategoryName}". Using fallback "${actualParttypeName}" for product: ${productName}`
-            );
             errors.push(
               `Parttype auto-corrected: "${parttypeName}" → "${actualParttypeName}" for ${productName}`
             );
@@ -898,22 +915,68 @@ const AcesPiesCategorizationTool = () => {
         });
       }
 
-      // BULK INSERT: Insert all products in one API call
+      // ULTRA-FAST: Single batch insert for small datasets (< 100 products)
       if (productsToInsert.length > 0) {
-        console.log(`🚀 Bulk inserting ${productsToInsert.length} products...`);
-        const { data: insertedData, error: insertError } = await supabase
-          .from("products")
-          .insert(productsToInsert)
-          .select();
+        if (productsToInsert.length <= 100) {
+          // Small dataset - insert all at once
+          console.log(
+            `⚡ Fast-inserting ${productsToInsert.length} products in one batch...`
+          );
 
-        if (insertError) {
-          console.error("❌ Bulk insert error:", insertError);
-          errorCount += productsToInsert.length;
-          errors.push(insertError.message);
+          const { error: insertError } = await supabase
+            .from("products")
+            .insert(productsToInsert, {
+              count: null,
+              returning: "minimal",
+            });
+
+          if (insertError) {
+            console.error(`❌ Insert error:`, insertError);
+            errorCount += productsToInsert.length;
+            errors.push(insertError.message);
+          } else {
+            successCount = productsToInsert.length;
+            console.log(`✅ Successfully inserted ${successCount} products`);
+          }
         } else {
-          successCount = insertedData?.length || productsToInsert.length;
-          console.log(`✅ Successfully inserted ${successCount} products`);
+          // Large dataset - use batching
+          const BATCH_SIZE = 500;
+          const totalBatches = Math.ceil(productsToInsert.length / BATCH_SIZE);
+
+          for (let i = 0; i < totalBatches; i++) {
+            const start = i * BATCH_SIZE;
+            const end = Math.min(start + BATCH_SIZE, productsToInsert.length);
+            const batch = productsToInsert.slice(start, end);
+
+            console.log(
+              `Uploading batch ${i + 1}/${totalBatches} (${
+                batch.length
+              } products)...`
+            );
+
+            const { error: insertError } = await supabase
+              .from("products")
+              .insert(batch, {
+                count: null,
+                returning: "minimal",
+              });
+
+            if (insertError) {
+              console.error(`❌ Batch ${i + 1} insert error:`, insertError);
+              errorCount += batch.length;
+              errors.push(`Batch ${i + 1}: ${insertError.message}`);
+            } else {
+              successCount += batch.length;
+              console.log(
+                `✅ Batch ${i + 1}/${totalBatches}: Successfully inserted ${
+                  batch.length
+                } products`
+              );
+            }
+          }
         }
+
+        console.log(`✅ Total successfully inserted: ${successCount} products`);
       }
 
       console.log(
@@ -929,7 +992,7 @@ const AcesPiesCategorizationTool = () => {
         errorCount > 0 ? errors.slice(0, 5).join("; ") : null;
 
       if (uploadHistoryId) {
-        await supabase
+        const { error: updateError } = await supabase
           .from("upload_history")
           .update({
             status: finalStatus,
@@ -937,6 +1000,10 @@ const AcesPiesCategorizationTool = () => {
             error_message: errorMessage,
           })
           .eq("id", uploadHistoryId);
+
+        if (updateError) {
+          console.warn("Failed to update upload history:", updateError);
+        }
       }
 
       if (successCount > 0) {
@@ -946,10 +1013,10 @@ const AcesPiesCategorizationTool = () => {
         const realErrors = errors.filter((e) => !e.includes("auto-corrected"));
 
         toast.success(
-          ` Successfully uploaded ${successCount} products!${
+          `Successfully uploaded ${successCount} products!${
             errorCount > 0 ? ` (${errorCount} failed)` : ""
           }`,
-          { id: loadingToast, duration: 5000 }
+          { duration: 5000 }
         );
 
         // Show warning about auto-corrections
@@ -972,8 +1039,7 @@ const AcesPiesCategorizationTool = () => {
         // DON'T clear productsFileInfo - keep it visible
       } else {
         toast.error(
-          `❌ Failed to upload: ${errorCount} errors. Check console for details.`,
-          { id: loadingToast }
+          `Failed to upload: ${errorCount} errors. Check console for details.`
         );
       }
     } catch (error) {
@@ -981,13 +1047,17 @@ const AcesPiesCategorizationTool = () => {
 
       // Update upload history if it was created
       if (uploadHistoryId) {
-        await supabase
+        const { error: updateError } = await supabase
           .from("upload_history")
           .update({
             status: "failed",
             error_message: error.message,
           })
           .eq("id", uploadHistoryId);
+
+        if (updateError) {
+          console.warn("Failed to update upload history:", updateError);
+        }
       }
 
       // Clean up uploaded file if product insertion failed
@@ -997,7 +1067,6 @@ const AcesPiesCategorizationTool = () => {
       }
 
       toast.error(`Failed to upload products: ${error.message}`, {
-        id: loadingToast,
         duration: 6000,
       });
     } finally {
@@ -1015,16 +1084,15 @@ const AcesPiesCategorizationTool = () => {
     const BATCH_SIZE = 500; // Match edge function limit
     const totalProducts = products.length;
 
-    console.log("\n🔄 Preparing products for vector categorization...");
-    console.log(`📦 Total products: ${totalProducts}`);
-
+    // SILENT BACKGROUND PROCESSING - No toast notifications
     setIsProcessing(true);
     setCategorizationMethod("vector");
 
-    // Generate embeddings for products first
-    const loadingToast = toast.loading(
-      `🔧 Generating embeddings for ${totalProducts} products...`
-    );
+    console.log("\n🔄 Preparing products for vector categorization...");
+    console.log(`📦 Total products: ${totalProducts}`);
+
+    // Small delay to ensure UI updates render
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     let productsToSend;
     try {
@@ -1034,18 +1102,13 @@ const AcesPiesCategorizationTool = () => {
         description: p.description || "",
       }));
 
-      toast.loading(`🔄 Generating embeddings...`, {
-        id: loadingToast,
-      });
-
-      // Generate embeddings with progress updates
+      // Generate embeddings silently (progress logged to console only)
       productsToSend = await generateProductEmbeddings(
         productsForEmbedding,
         (current, total) => {
-          if (current % 5 === 0 || current === total) {
-            toast.loading(`🔧 Generating embeddings: ${current}/${total}`, {
-              id: loadingToast,
-            });
+          // Log progress to console only, no toast updates
+          if (current % 10 === 0 || current === total) {
+            console.log(`🔧 Generated embeddings: ${current}/${total}`);
           }
         }
       );
@@ -1070,7 +1133,6 @@ const AcesPiesCategorizationTool = () => {
       }
 
       toast.error(`Embedding Error: ${errorMessage}`, {
-        id: loadingToast,
         duration: 6000,
       });
       setIsProcessing(false);
@@ -1087,17 +1149,13 @@ const AcesPiesCategorizationTool = () => {
       );
     }
 
-    toast.loading(
-      needsBatching
-        ? `🚀 Categorizing ${totalProducts} products in ${totalBatches} batches...`
-        : `🚀 Categorizing ${totalProducts} products using vector similarity...`,
-      { id: loadingToast }
-    );
+    // No toast updates - keep the initial one and work silently
+    // Toast stays as: "🚀 Categorizing X products..."
 
     try {
       let allCategorizedProducts = [];
 
-      // Process in batches if needed
+      // Process in batches if needed - all logging to console only
       for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
         const start = batchIndex * BATCH_SIZE;
         const end = Math.min(start + BATCH_SIZE, totalProducts);
@@ -1109,12 +1167,7 @@ const AcesPiesCategorizationTool = () => {
               batchIndex + 1
             }/${totalBatches}: Processing products ${start + 1}-${end}`
           );
-          toast.loading(
-            `🔄 Batch ${batchIndex + 1}/${totalBatches}: ${
-              start + 1
-            }-${end} of ${totalProducts}`,
-            { id: loadingToast }
-          );
+          // No toast updates - silent background processing
         }
 
         const startTime = Date.now();
@@ -1211,18 +1264,14 @@ const AcesPiesCategorizationTool = () => {
         const highConf = updatedProducts.filter(
           (p) => (p.confidence || 0) >= 70
         ).length;
-        toast.success(
-          `✅ Categorized ${categorized.length} products! (${highConf} high confidence)`,
-          { id: loadingToast, duration: 4000 }
-        );
+        toast.success(` Categories Assigned Successfully!`, { duration: 5000 });
       } else {
         throw new Error("No categorized products returned from edge function");
       }
     } catch (error) {
       console.error("❌ Categorization failed:", error);
       toast.error(`Failed to assign categories: ${error.message}`, {
-        id: loadingToast,
-        duration: 5000,
+        duration: 6000,
       });
     } finally {
       setIsProcessing(false);
@@ -1518,10 +1567,6 @@ const AcesPiesCategorizationTool = () => {
 
     setIsProcessing(true);
     setCategorizationMethod("openai");
-    const loadingToast = toast.loading(
-      "🤖 Auto-suggesting categories with OpenAI..."
-    );
-
     try {
       // Use the current active categories (ACES or custom)
       const categoriesToUse =
@@ -1535,31 +1580,12 @@ const AcesPiesCategorizationTool = () => {
         } categories for OpenAI`
       );
 
-      // Call OpenAI batch categorization
-      const { results, stats } = await batchCategorizeWithOpenAI(
+      // Call OpenAI batch categorization (no progress toasts)
+      const { results } = await batchCategorizeWithOpenAI(
         products,
-        (completed, total, currentBatch, totalBatches) => {
-          const percentage = Math.round((completed / total) * 100);
-          toast.loading(
-            `🤖 OpenAI Processing: Batch ${currentBatch}/${totalBatches} - ${completed}/${total} products (${percentage}%)`,
-            { id: loadingToast }
-          );
-        },
+        undefined,
         categoriesToUse
       );
-
-      console.log("✅ OpenAI categorization complete:", stats);
-
-      // Calculate average confidence
-      const confidences = results
-        .map((r) => r.confidence || 0)
-        .filter((c) => c > 0);
-      const avgConfidence =
-        confidences.length > 0
-          ? Math.round(
-              confidences.reduce((a, b) => a + b, 0) / confidences.length
-            )
-          : 0;
 
       // Update products with AI suggestions
       const updatedProducts = results.map((result) => ({
@@ -1579,16 +1605,10 @@ const AcesPiesCategorizationTool = () => {
       dispatch(setReduxProducts(updatedProducts));
       dispatch(setReduxProductsReadyForUpload(true));
 
-      const highConfidence = confidences.filter((c) => c >= 80).length;
-      toast.success(
-        `✅ OpenAI categorized ${results.length} products! Avg: ${avgConfidence}% | ${highConfidence} high confidence (≥80%)`,
-        { id: loadingToast, duration: 5000 }
-      );
+      toast.success(" Categories Assigned Successfully!", { duration: 5000 });
     } catch (error) {
       console.error("❌ OpenAI categorization error:", error);
-      toast.error(`❌ OpenAI categorization failed: ${error.message}`, {
-        id: loadingToast,
-      });
+      toast.error(`❌ OpenAI categorization failed: ${error.message}`);
       setApiError(error);
     } finally {
       setIsProcessing(false);
@@ -2040,29 +2060,27 @@ const AcesPiesCategorizationTool = () => {
                 Check DB
               </button> */}
 
-              {productsReadyForUpload && products.length > 0 && (
-                <button
-                  onClick={() => setShowUploadModal(true)}
-                  disabled={uploadingProducts}
-                  className={`px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm ${
-                    uploadingProducts
-                      ? "bg-gray-400 cursor-not-allowed text-white"
-                      : "bg-indigo-600 text-white hover:bg-indigo-700"
-                  }`}
-                >
-                  {uploadingProducts ? (
-                    <>
-                      <span className="animate-spin">⏳</span>
-                      <span>Uploading...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      <span>Permanently Stored</span>
-                    </>
-                  )}
-                </button>
-              )}
+              <button
+                onClick={() => setShowUploadModal(true)}
+                disabled={uploadingProducts}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm ${
+                  uploadingProducts
+                    ? "bg-gray-400 cursor-not-allowed text-white"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700"
+                }`}
+              >
+                {uploadingProducts ? (
+                  <>
+                    <span className="animate-spin">⏳</span>
+                    <span>Uploading...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    <span>Permanently Stored</span>
+                  </>
+                )}
+              </button>
 
               <button
                 onClick={handleExport}

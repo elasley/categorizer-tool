@@ -185,10 +185,6 @@ const CategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading(
-      "Generating AI embedding and adding category..."
-    );
-
     try {
       // Generate AI-powered embedding using MiniLM-v2 model
       const embedding = await generateEmbedding(formData.name);
@@ -198,14 +194,14 @@ const CategoriesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Category added successfully!", { id: loadingToast });
+      toast.success("Category added successfully!");
       setShowAddModal(false);
       setFormData({ name: "" });
       hasLoadedRef.current = false;
       loadInitialData();
     } catch (error) {
       console.error("Error adding category:", error);
-      toast.error(`Failed to add: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to add: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -218,9 +214,6 @@ const CategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading(
-      "Regenerating AI embedding and updating category..."
-    );
 
     try {
       // Regenerate AI-powered embedding using MiniLM-v2 model
@@ -232,13 +225,13 @@ const CategoriesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Category updated successfully!", { id: loadingToast });
+      toast.success("Category updated successfully!");
       setShowEditModal(false);
       hasLoadedRef.current = false;
       loadInitialData();
     } catch (error) {
       console.error("Error updating category:", error);
-      toast.error(`Failed to update: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to update: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -248,7 +241,6 @@ const CategoriesPage = () => {
     if (!deleteItem) return;
 
     setDeleting(true);
-    const loadingToast = toast.loading("Deleting...");
 
     try {
       const { error } = await supabase
@@ -258,14 +250,14 @@ const CategoriesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Category deleted successfully!", { id: loadingToast });
+      toast.success("Category deleted successfully!");
       setShowDeleteModal(false);
       setDeleteItem(null);
       hasLoadedRef.current = false;
       loadInitialData();
     } catch (error) {
       console.error("Error deleting:", error);
-      toast.error(`Failed to delete: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to delete: ${error.message}`);
     } finally {
       setDeleting(false);
     }
@@ -347,9 +339,7 @@ const CategoriesPage = () => {
           <h2 className="text-lg font-semibold text-gray-900">
             All Categories
           </h2>
-          <span className="text-sm text-gray-500">
-            {categories.length} categories
-          </span>
+          <span className="text-sm text-gray-500">{totalCount} categories</span>
         </div>
 
         <div className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">

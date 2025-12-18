@@ -134,9 +134,6 @@ const ParttypesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading(
-      "Generating AI embedding and adding part type..."
-    );
 
     try {
       // Fetch subcategory and category info for embedding generation
@@ -169,13 +166,13 @@ const ParttypesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Part type added successfully!", { id: loadingToast });
+      toast.success("Part type added successfully!");
       setShowAddModal(false);
       setFormData({ name: "", subcategoryId: "" });
       reloadAllData();
     } catch (error) {
       console.error("Error adding part type:", error);
-      toast.error(`Failed to add: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to add: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -188,9 +185,6 @@ const ParttypesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading(
-      "Regenerating AI embedding and updating part type..."
-    );
 
     try {
       // Fetch subcategory and category info for embedding generation
@@ -225,12 +219,12 @@ const ParttypesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Part type updated successfully!", { id: loadingToast });
+      toast.success("Part type updated successfully!");
       setShowEditModal(false);
       reloadAllData();
     } catch (error) {
       console.error("Error updating part type:", error);
-      toast.error(`Failed to update: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to update: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -240,7 +234,6 @@ const ParttypesPage = () => {
     if (!deleteItem) return;
 
     setDeleting(true);
-    const loadingToast = toast.loading("Deleting...");
 
     try {
       const { error } = await supabase
@@ -250,13 +243,13 @@ const ParttypesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Part type deleted successfully!", { id: loadingToast });
+      toast.success("Part type deleted successfully!");
       setShowDeleteModal(false);
       setDeleteItem(null);
       reloadAllData();
     } catch (error) {
       console.error("Error deleting:", error);
-      toast.error(`Failed to delete: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to delete: ${error.message}`);
     } finally {
       setDeleting(false);
     }
@@ -435,9 +428,7 @@ const ParttypesPage = () => {
           <h2 className="text-lg font-semibold text-gray-900">
             All Part Types
           </h2>
-          <span className="text-sm text-gray-500">
-            {displayedParttypes.length} part types
-          </span>
+          <span className="text-sm text-gray-500">{totalCount} part types</span>
         </div>
 
         <div className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">

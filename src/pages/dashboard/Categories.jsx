@@ -317,7 +317,6 @@ const Categories = () => {
     if (!deleteItem || !deleteType) return;
 
     setDeleting(true);
-    const loadingToast = toast.loading("Deleting...");
 
     const tableName =
       deleteType === "category"
@@ -334,14 +333,14 @@ const Categories = () => {
 
       if (error) throw error;
 
-      toast.success(`${deleteType} deleted successfully`, { id: loadingToast });
+      toast.success(`${deleteType} deleted successfully`);
       setShowDeleteModal(false);
       setDeleteItem(null);
       setDeleteType("");
       loadAllData();
     } catch (error) {
       console.error("Error deleting:", error);
-      toast.error("Failed to delete", { id: loadingToast });
+      toast.error("Failed to delete");
     } finally {
       setDeleting(false);
     }

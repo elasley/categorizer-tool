@@ -130,9 +130,6 @@ const SubcategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading(
-      "Generating AI embedding and adding subcategory..."
-    );
 
     try {
       // Fetch category info for embedding generation
@@ -155,13 +152,13 @@ const SubcategoriesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Subcategory added successfully!", { id: loadingToast });
+      toast.success("Subcategory added successfully!");
       setShowAddModal(false);
       setFormData({ name: "", categoryId: "" });
       reloadAllData();
     } catch (error) {
       console.error("Error adding subcategory:", error);
-      toast.error(`Failed to add: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to add: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -174,9 +171,6 @@ const SubcategoriesPage = () => {
     }
 
     setSaving(true);
-    const loadingToast = toast.loading(
-      "Regenerating AI embedding and updating subcategory..."
-    );
 
     try {
       // Fetch category info for embedding generation
@@ -201,12 +195,12 @@ const SubcategoriesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Subcategory updated successfully!", { id: loadingToast });
+      toast.success("Subcategory updated successfully!");
       setShowEditModal(false);
       reloadAllData();
     } catch (error) {
       console.error("Error updating subcategory:", error);
-      toast.error(`Failed to update: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to update: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -216,7 +210,6 @@ const SubcategoriesPage = () => {
     if (!deleteItem) return;
 
     setDeleting(true);
-    const loadingToast = toast.loading("Deleting...");
 
     try {
       const { error } = await supabase
@@ -226,13 +219,13 @@ const SubcategoriesPage = () => {
 
       if (error) throw error;
 
-      toast.success("Subcategory deleted successfully!", { id: loadingToast });
+      toast.success("Subcategory deleted successfully!");
       setShowDeleteModal(false);
       setDeleteItem(null);
       reloadAllData();
     } catch (error) {
       console.error("Error deleting:", error);
-      toast.error(`Failed to delete: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to delete: ${error.message}`);
     } finally {
       setDeleting(false);
     }
@@ -404,7 +397,7 @@ const SubcategoriesPage = () => {
             All Subcategories
           </h2>
           <span className="text-sm text-gray-500">
-            {displayedSubcategories.length} subcategories
+            {totalCount} subcategories
           </span>
         </div>
 

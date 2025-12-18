@@ -108,26 +108,19 @@ const ReportsPage = () => {
     []
   );
 
-  // Initial load (paginated)
+  // Only load once on mount
   useEffect(() => {
-    if (!search) {
-      setPage(0);
-      fetchReports(0, false, "");
-    }
-  }, [fetchReports, search]);
+    fetchReports(0, false, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Search effect (debounced)
+  // Search effect (debounced, only triggers fetch on search, not on clear)
   useEffect(() => {
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
-
     if (search) {
       searchTimeout.current = setTimeout(() => {
         fetchReports(0, false, search.trim());
       }, 500);
-    } else {
-      // If search cleared, reload paginated
-      setSearching(false);
-      fetchReports(0, false, "");
     }
     return () => {
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
