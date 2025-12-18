@@ -266,6 +266,7 @@ const SubcategoriesPage = () => {
           )
           .ilike("name", `%${searchTerm}%`)
           .order("name");
+          
 
         if (user?.id) {
           query = query.eq("user_id", user.id);
