@@ -213,6 +213,7 @@ const ReportsPage = () => {
           .from("upload_history")
           .select("*", { count: "exact" })
           .eq("user_id", user?.id)
+          .neq("status", "failed") // Filter out failed reports
           .order("created_at", { ascending: false });
 
         if (searchTerm) {
@@ -261,14 +262,22 @@ const ReportsPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Search effect (debounced, only triggers fetch on search, not on clear)
+  // Search effect (debounced, triggers fetch on search and reload on clear)
   useEffect(() => {
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    if (search) {
-      searchTimeout.current = setTimeout(() => {
+    
+    searchTimeout.current = setTimeout(() => {
+      if (search.trim()) {
+        // Search for specific term
         fetchReports(0, false, search.trim());
-      }, 500);
-    }
+      } else {
+        // Reload all data when search is cleared
+        setPage(0);
+        setHasMore(true);
+        fetchReports(0, false, "");
+      }
+    }, 500);
+
     return () => {
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
     };
