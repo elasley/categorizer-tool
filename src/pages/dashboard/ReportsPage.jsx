@@ -265,7 +265,7 @@ const ReportsPage = () => {
   // Search effect (debounced, triggers fetch on search and reload on clear)
   useEffect(() => {
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    
+
     searchTimeout.current = setTimeout(() => {
       if (search.trim()) {
         // Search for specific term
@@ -445,9 +445,7 @@ const ReportsPage = () => {
                   <th className="w-[20%] px-6 py-4 text-left text-xs font-bold uppercase tracking-wider">
                     Description
                   </th>
-                  <th className="w-[12%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
-                    Products
-                  </th>
+
                   <th className="w-[13%] px-6 py-4 text-center text-xs font-bold uppercase tracking-wider">
                     Status
                   </th>
@@ -583,9 +581,7 @@ const ReportsPage = () => {
                     <th className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wider whitespace-nowrap hidden md:table-cell">
                       Description
                     </th>
-                    <th className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider whitespace-nowrap">
-                      Products
-                    </th>
+
                     <th className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider whitespace-nowrap">
                       Status
                     </th>
@@ -598,156 +594,155 @@ const ReportsPage = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {reports.map((report, index) => (
-                    <React.Fragment key={report.id}>
-                      <tr
-                        className={`transition-all hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 cursor-pointer ${
-                          index % 2 === 0 ? "bg-white" : "bg-gray-50"
-                        }`}
-                      >
-                        <td className="px-3 py-4 align-top">
-                          <div className="flex items-center space-x-2">
-                            <div
-                              className={`flex-shrink-0 p-2 rounded-lg ${
-                                report.status === "success"
-                                  ? "bg-green-100"
-                                  : report.status === "failed"
-                                  ? "bg-red-100"
-                                  : "bg-yellow-100"
-                              }`}
-                            >
-                              <FileText
-                                className={`w-5 h-5 ${
-                                  report.status === "success"
-                                    ? "text-green-600"
-                                    : report.status === "failed"
-                                    ? "text-red-600"
-                                    : "text-yellow-600"
-                                }`}
-                              />
-                            </div>
-                            <span className="font-semibold text-gray-800 truncate text-sm sm:text-base">
-                              {report.file_name}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-top hidden md:table-cell">
-                          <span className="text-xs sm:text-sm text-gray-600 line-clamp-2">
-                            {report.description || "No description"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-4 align-top">
-                          <div className="flex items-center justify-center space-x-1">
-                            <Package className="w-4 h-4 text-indigo-500 flex-shrink-0" />
-                            <span className="font-bold text-base sm:text-xl text-gray-800">
-                              {report.products_count || 0}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-top">
-                          <div className="flex justify-center">
-                            <span
-                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase tracking-wide whitespace-nowrap ${
-                                report.status === "success"
-                                  ? "bg-green-100 text-green-700 border border-green-200"
-                                  : report.status === "failed"
-                                  ? "bg-red-100 text-red-700 border border-red-200"
-                                  : "bg-yellow-100 text-yellow-700 border border-yellow-200"
-                              }`}
-                            >
-                              {report.status === "success" && (
-                                <CheckCircle className="w-3 h-3 mr-1.5" />
-                              )}
-                              {report.status === "failed" && (
-                                <AlertCircle className="w-3 h-3 mr-1.5" />
-                              )}
-                              {report.status}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-top hidden sm:table-cell">
-                          <div className="flex items-center space-x-2 text-gray-600">
-                            <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                            <div>
-                              <div className="text-xs font-medium">
-                                {new Date(report.created_at).toLocaleDateString(
-                                  "en-US",
-                                  {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  }
+                  {reports.map(
+                    (report, index) => (
+                      console.log(report, "ttrtrtrtrtrt"),
+                      (
+                        <React.Fragment key={report.id}>
+                          <tr
+                            className={`transition-all hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 cursor-pointer ${
+                              index % 2 === 0 ? "bg-white" : "bg-gray-50"
+                            }`}
+                          >
+                            <td className="px-3 py-4 align-top">
+                              <div className="flex items-center space-x-2">
+                                <div
+                                  className={`flex-shrink-0 p-2 rounded-lg ${
+                                    report.status === "success"
+                                      ? "bg-green-100"
+                                      : report.status === "failed"
+                                      ? "bg-red-100"
+                                      : "bg-yellow-100"
+                                  }`}
+                                >
+                                  <FileText
+                                    className={`w-5 h-5 ${
+                                      report.status === "success"
+                                        ? "text-green-600"
+                                        : report.status === "failed"
+                                        ? "text-red-600"
+                                        : "text-yellow-600"
+                                    }`}
+                                  />
+                                </div>
+                                <span className="font-semibold text-gray-800 truncate text-sm sm:text-base">
+                                  {report.file_name}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-4 align-top hidden md:table-cell">
+                              <span className="text-xs sm:text-sm text-gray-600 line-clamp-2">
+                                {report.description || "No description"}
+                              </span>
+                            </td>
+
+                            <td className="px-3 py-4 align-top">
+                              <div className="flex justify-center">
+                                <span
+                                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-bold uppercase tracking-wide whitespace-nowrap ${
+                                    report.status === "success"
+                                      ? "bg-green-100 text-green-700 border border-green-200"
+                                      : report.status === "failed"
+                                      ? "bg-red-100 text-red-700 border border-red-200"
+                                      : "bg-yellow-100 text-yellow-700 border border-yellow-200"
+                                  }`}
+                                >
+                                  {report.status === "success" && (
+                                    <CheckCircle className="w-3 h-3 mr-1.5" />
+                                  )}
+                                  {report.status === "failed" && (
+                                    <AlertCircle className="w-3 h-3 mr-1.5" />
+                                  )}
+                                  {report.status}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-4 align-top hidden sm:table-cell">
+                              <div className="flex items-center space-x-2 text-gray-600">
+                                <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                <div>
+                                  <div className="text-xs font-medium">
+                                    {new Date(
+                                      report.created_at
+                                    ).toLocaleDateString("en-US", {
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                    })}
+                                  </div>
+                                  <div className="text-[10px] text-gray-400">
+                                    {new Date(
+                                      report.created_at
+                                    ).toLocaleTimeString("en-US", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-4 align-top">
+                              <div className="flex items-center justify-center">
+                                {report.file_url && (
+                                  <ActionsDropdown
+                                    report={report}
+                                    onView={() =>
+                                      viewFile(
+                                        report.file_url,
+                                        report.file_name
+                                      )
+                                    }
+                                    onDownload={() =>
+                                      downloadFile(
+                                        report.file_url,
+                                        report.file_name
+                                      )
+                                    }
+                                    onDelete={() => {
+                                      setDeleteReport(report);
+                                      setShowDeleteModal(true);
+                                    }}
+                                    open={openDropdown === report.id}
+                                    setOpen={(isOpen) =>
+                                      setOpenDropdown(isOpen ? report.id : null)
+                                    }
+                                  />
                                 )}
                               </div>
-                              <div className="text-[10px] text-gray-400">
-                                {new Date(report.created_at).toLocaleTimeString(
-                                  "en-US",
-                                  {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  }
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-4 align-top">
-                          <div className="flex items-center justify-center">
-                            {report.file_url && (
-                              <ActionsDropdown
-                                report={report}
-                                onView={() =>
-                                  viewFile(report.file_url, report.file_name)
-                                }
-                                onDownload={() =>
-                                  downloadFile(
-                                    report.file_url,
-                                    report.file_name
-                                  )
-                                }
-                                onDelete={() => {
-                                  setDeleteReport(report);
-                                  setShowDeleteModal(true);
-                                }}
-                                open={openDropdown === report.id}
-                                setOpen={(isOpen) =>
-                                  setOpenDropdown(isOpen ? report.id : null)
-                                }
-                              />
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                      {expandedReport === report.id && (
-                        <tr className="bg-gradient-to-r from-gray-50 to-blue-50">
-                          <td colSpan="6" className="px-3 py-4">
-                            <div className="max-w-4xl mx-auto space-y-3">
-                              {report.description && (
-                                <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-                                  <h4 className="text-xs font-bold text-indigo-700 mb-2 uppercase tracking-wide">
-                                    Description
-                                  </h4>
-                                  <p className="text-sm text-gray-700">
-                                    {report.description}
-                                  </p>
+                            </td>
+                          </tr>
+                          {expandedReport === report.id && (
+                            <tr className="bg-gradient-to-r from-gray-50 to-blue-50">
+                              <td colSpan="6" className="px-3 py-4">
+                                <div className="max-w-4xl mx-auto space-y-3">
+                                  {report.description && (
+                                    <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+                                      <h4 className="text-xs font-bold text-indigo-700 mb-2 uppercase tracking-wide">
+                                        Description
+                                      </h4>
+                                      <p className="text-sm text-gray-700">
+                                        {report.description}
+                                      </p>
+                                    </div>
+                                  )}
+                                  {report.error_message && (
+                                    <div className="bg-red-50 rounded-lg p-4 border-l-4 border-red-500">
+                                      <h4 className="text-xs font-bold text-red-700 mb-2 uppercase tracking-wide">
+                                        Error Details
+                                      </h4>
+                                      <p className="text-sm text-red-600">
+                                        {report.error_message}
+                                      </p>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                              {report.error_message && (
-                                <div className="bg-red-50 rounded-lg p-4 border-l-4 border-red-500">
-                                  <h4 className="text-xs font-bold text-red-700 mb-2 uppercase tracking-wide">
-                                    Error Details
-                                  </h4>
-                                  <p className="text-sm text-red-600">
-                                    {report.error_message}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  ))}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    )
+                  )}
                 </tbody>
               </table>
 

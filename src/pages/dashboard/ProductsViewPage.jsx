@@ -568,15 +568,6 @@ const ProductsViewPage = () => {
               </h1>
             </div>
           </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-fit sm:mt-0 mt-5">
-            <div className="flex items-center bg-white px-4 py-2 rounded-lg border border-gray-200">
-              <Package className="w-5 h-5 text-blue-500" />
-              <span className="font-semibold text-gray-700 ml-2">
-                {products.length} Products
-              </span>
-            </div>
-          </div>
         </div>
         <div className="flex items-center space-x-4 mb-4">
           <span
