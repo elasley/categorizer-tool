@@ -442,6 +442,7 @@ const SubcategoriesPage = () => {
                         setFormData({
                           name: subcategory.name,
                           categoryId: subcategory.category_id,
+                          categoryName: subcategory.categories?.name || "",
                         });
                         setShowEditModal(true);
                       }}
@@ -605,7 +606,7 @@ const AddEditModal = ({
 }) => {
   // AsyncPaginate loader for react-select
   const loadCategoryOptions = async (inputValue, loadedOptions, { page }) => {
-    const PAGE_SIZE = 5;
+    const PAGE_SIZE = 50;
     let query = supabase
       .from("categories")
       .select("id, name")
@@ -656,7 +657,10 @@ const AddEditModal = ({
           <AsyncPaginate
             value={
               formData.categoryId
-                ? { value: formData.categoryId, label: "" }
+                ? {
+                    value: formData.categoryId,
+                    label: formData.categoryName || "",
+                  }
                 : null
             }
             loadOptions={loadCategoryOptions}
@@ -665,6 +669,7 @@ const AddEditModal = ({
               setFormData({
                 ...formData,
                 categoryId: option ? option.value : "",
+                categoryName: option ? option.label : "",
               })
             }
             placeholder="Search or select category..."

@@ -475,6 +475,13 @@ const ParttypesPage = () => {
                         setFormData({
                           name: parttype.name,
                           subcategoryId: parttype.subcategory_id,
+                          subcategoryName:
+                            parttype.subcategories &&
+                            parttype.subcategories.name
+                              ? parttype.subcategories.categories
+                                ? `${parttype.subcategories.categories.name} > ${parttype.subcategories.name}`
+                                : parttype.subcategories.name
+                              : "",
                         });
                         setShowEditModal(true);
                       }}
@@ -508,7 +515,6 @@ const ParttypesPage = () => {
             </>
           )}
         </div>
-
         {/* Pagination Footer */}
         {!loading && displayedParttypes.length > 0 && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
@@ -516,7 +522,8 @@ const ParttypesPage = () => {
             {totalCount > 0 && (
               <>
                 {" "}
-                (out of {totalCount} total part type{totalCount > 1 ? "s" : ""})
+                (out of {totalCount} total part type
+                {totalCount === 1 ? "" : "s"})
               </>
             )}
             {searchTerm && ` (filtered)`}
@@ -527,7 +534,7 @@ const ParttypesPage = () => {
       {/* Add Modal */}
       {showAddModal && (
         <AddEditModal
-          title="Add Part Type Categories"
+          title="Add Part Type"
           onClose={() => setShowAddModal(false)}
           formData={formData}
           setFormData={setFormData}
@@ -540,7 +547,7 @@ const ParttypesPage = () => {
       {/* Edit Modal */}
       {showEditModal && (
         <AddEditModal
-          title="Edit Part Type Categories"
+          title="Edit Part Type"
           onClose={() => setShowEditModal(false)}
           formData={formData}
           setFormData={setFormData}
@@ -640,12 +647,15 @@ const AddEditModal = ({
     loadedOptions,
     { page }
   ) => {
-    const PAGE_SIZE = 10;
+    // Show first batch of 50, then paginate as before
+    const PAGE_SIZE = page === 1 ? 50 : 50;
+    const start = (page - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE - 1;
     let query = supabase
       .from("subcategories")
       .select("id, name, categories(id, name)")
       .order("name")
-      .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+      .range(start, end);
     if (user?.id) {
       query = query.eq("user_id", user.id);
     }
@@ -696,7 +706,10 @@ const AddEditModal = ({
           <AsyncPaginate
             value={
               formData.subcategoryId
-                ? { value: formData.subcategoryId, label: "" }
+                ? {
+                    value: formData.subcategoryId,
+                    label: formData.subcategoryName || "",
+                  }
                 : null
             }
             loadOptions={loadSubcategoryOptions}
@@ -705,6 +718,7 @@ const AddEditModal = ({
               setFormData({
                 ...formData,
                 subcategoryId: option ? option.value : "",
+                subcategoryName: option ? option.label : "",
               })
             }
             placeholder="Select subcategories"
