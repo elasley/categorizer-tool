@@ -603,6 +603,10 @@ const ReportsPage = () => {
                             className={`transition-all hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 cursor-pointer ${
                               index % 2 === 0 ? "bg-white" : "bg-gray-50"
                             }`}
+                            onClick={() =>
+                              report.file_url &&
+                              viewFile(report.file_url, report.file_name)
+                            }
                           >
                             <td className="px-3 py-4 align-top">
                               <div className="flex items-center space-x-2">

@@ -569,14 +569,7 @@ const ProductsViewPage = () => {
             </div>
           </div>
         </div>
-        <div className="flex items-center space-x-4 mb-4">
-          <span
-            className="text-2xl font-normal text-gray-800 ml-2   block"
-            title={fileName}
-          >
-            <span>File Name: {fileName}</span>
-          </span>
-        </div>
+
         {/* Products Table */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
