@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import {
   Search,
@@ -64,6 +65,7 @@ import {
 } from "../store/slices/categorizerSlice";
 
 const AcesPiesCategorizationTool = () => {
+  const navigate = useNavigate();
   const dispatch = useDispatch();
 
   // Get persisted state from Redux
@@ -989,6 +991,10 @@ const AcesPiesCategorizationTool = () => {
         setLastUploadedFileInfo(productsFileInfo); // Save the uploaded file info
         setLastUploadType("products");
         // DON'T clear productsFileInfo - keep it visible
+        // Redirect to reports page after successful upload
+        setTimeout(() => {
+          navigate("/reports");
+        }, 800);
       } else {
         toast.error(
           `Failed to upload: ${errorCount} errors. Check console for details.`
@@ -2170,6 +2176,26 @@ const AcesPiesCategorizationTool = () => {
                         confidenceThreshold={confidenceThreshold}
                         categories={categories}
                         onAddCustomCategory={handleAddCustomCategory}
+                        onDelete={async (prod) => {
+                          // Remove from Supabase if possible
+                          try {
+                            if (prod.id) {
+                              await supabase
+                                .from("products")
+                                .delete()
+                                .eq("id", prod.id);
+                            }
+                          } catch (err) {
+                            toast.error("Failed to delete from database");
+                          }
+                          // Remove from Redux
+                          dispatch(
+                            setReduxProducts(
+                              products.filter((p) => p.id !== prod.id)
+                            )
+                          );
+                          toast.success("Product deleted");
+                        }}
                       />
                     );
                   })}

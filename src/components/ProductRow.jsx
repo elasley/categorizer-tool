@@ -8,9 +8,10 @@ import {
   ExternalLink,
   CircleCheck,
   Check,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 import { stripHtmlTags } from "../utils/textUtils";
-
 const ProductRow = ({
   product,
   onUpdate,
@@ -18,14 +19,16 @@ const ProductRow = ({
   confidenceThreshold,
   categories,
   onAddCustomCategory,
+  onDelete,
 }) => {
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({});
   const [showCustomSubcategory, setShowCustomSubcategory] = useState(false);
   const [showCustomPartType, setShowCustomPartType] = useState(false);
   const [customSubcategory, setCustomSubcategory] = useState("");
   const [customPartType, setCustomPartType] = useState("");
-
+  const [deleting, setDeleting] = useState(false);
   useEffect(() => {
     const getCurrentDisplayValue = (originalField, suggestedField) => {
       if (
@@ -710,12 +713,83 @@ const ProductRow = ({
                 e.stopPropagation();
                 setIsEditing(true);
               }}
-              className="inline-flex items-center justify-center py-2 px-3 border border-gray-300 text-sm font-medium rounded-lg text-white bg-green-500  hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200 shadow-sm"
+              className="inline-flex items-center justify-center py-1 px-3 border border-gray-300 text-sm font-medium rounded-lg text-white bg-green-500  hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200 shadow-sm"
               title="Edit product"
             >
-              <Edit2 className="w-3 h-3 mr-3" />
-              Edit
+              <Edit2 className="w-4 h-34" />
             </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowDeleteModal(true);
+              }}
+              className="inline-flex items-center justify-center py-2 px-2 border border-gray-300 text-sm font-medium rounded-lg text-white bg-red-500 hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200 shadow-sm"
+              title="Delete product"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            {showDeleteModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+                <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm relative">
+                  {/* ❌ Close Icon */}
+                  <button
+                    onClick={() => setShowDeleteModal(false)}
+                    disabled={deleting}
+                    className="absolute top-3 right-3 p-1 rounded hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    <X className="w-5 h-5 text-gray-600" />
+                  </button>
+
+                  <h3 className="text-lg font-semibold mb-4 text-gray-900">
+                    Delete Product
+                  </h3>
+
+                  <p className="mb-4 text-gray-700">
+                    Are you sure you want to permanently delete this product?
+                  </p>
+
+                  <div className="flex justify-end gap-2">
+                    {/* Cancel */}
+                    <button
+                      onClick={() => setShowDeleteModal(false)}
+                      disabled={deleting}
+                      className="px-4 py-2 rounded bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+
+                    {/* Delete with loader */}
+                    <button
+                      onClick={async () => {
+                        setDeleting(true);
+                        try {
+                          if (onDelete) await onDelete(product);
+                        } finally {
+                          setDeleting(false);
+                          setShowDeleteModal(false);
+                        }
+                      }}
+                      disabled={deleting}
+                      className={`px-4 py-2 rounded text-white flex items-center gap-2
+          ${
+            deleting
+              ? "bg-red-400 cursor-not-allowed"
+              : "bg-red-600 hover:bg-red-700"
+          }`}
+                    >
+                      {deleting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Deleting...
+                        </>
+                      ) : (
+                        "Delete"
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </td>

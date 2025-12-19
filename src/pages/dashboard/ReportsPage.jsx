@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
 import { supabase } from "../../config/supabase";
@@ -44,21 +45,36 @@ const ActionsDropdown = ({
 }) => {
   const buttonRef = useRef(null);
   const dropdownRef = useRef(null);
-  const [dropdownPosition, setDropdownPosition] = useState("bottom");
+  const [dropdownStyle, setDropdownStyle] = useState(null);
 
   // Calculate dropdown position based on button location
   useEffect(() => {
     if (open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
-      const viewportHeight = window.innerHeight;
       const dropdownHeight = 140; // Approximate height of dropdown
-
-      // If button is in bottom 40% of screen, show dropdown above
-      if (rect.bottom > viewportHeight * 0.6) {
-        setDropdownPosition("top");
-      } else {
-        setDropdownPosition("bottom");
+      const margin = 8;
+      let top = rect.bottom + margin;
+      let left = rect.right - 192; // 192px = w-48
+      if (rect.bottom + dropdownHeight + margin > window.innerHeight) {
+        // Not enough space below, show above
+        top = rect.top - dropdownHeight - margin;
       }
+      // Prevent overflow left
+      if (left < 8) left = 8;
+      setDropdownStyle({
+        position: "fixed",
+        top: Math.max(top, 8),
+        left,
+        width: 192,
+        zIndex: 9999,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+        borderRadius: 12,
+        background: "white",
+        border: "1px solid #e5e7eb",
+        transition: "opacity 0.15s",
+      });
+    } else {
+      setDropdownStyle(null);
     }
   }, [open]);
 
@@ -114,52 +130,49 @@ const ActionsDropdown = ({
       >
         <MoreVertical className="w-4 h-4" />
       </button>
-
-      {open && (
-        <div
-          ref={dropdownRef}
-          className={`absolute right-0 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 ${
-            dropdownPosition === "top" ? "bottom-full mb-2" : "top-full mt-2"
-          }`}
-        >
-          <div className="py-1">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onView();
-                setOpen(false);
-              }}
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-            >
-              <Eye className="w-4 h-4" />
-              View File
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDownload();
-                setOpen(false);
-              }}
-              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Download
-            </button>
-            <hr className="my-1" />
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-                setOpen(false);
-              }}
-              className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-            >
-              <Trash2 className="w-4 h-4" />
-              Delete
-            </button>
-          </div>
-        </div>
-      )}
+      {open &&
+        dropdownStyle &&
+        createPortal(
+          <div ref={dropdownRef} style={dropdownStyle}>
+            <div className="py-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onView();
+                  setOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+              >
+                <Eye className="w-4 h-4" />
+                View File
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDownload();
+                  setOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Download
+              </button>
+              <hr className="my-1" />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                  setOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

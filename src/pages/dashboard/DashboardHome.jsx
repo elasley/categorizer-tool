@@ -193,9 +193,18 @@ const DashboardHome = () => {
               </div>
             ) : (
               recentUploads.map((upload) => (
-                <div
+                <button
                   key={upload.id}
-                  className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg hover:bg-blue-100 transition-colors w-full text-left focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  onClick={() => {
+                    // Navigate directly to products-view page for this file
+                    if (upload.file_url) {
+                      navigate(
+                        `/products-view/${encodeURIComponent(upload.file_url)}`
+                      );
+                    }
+                  }}
+                  title={upload.file_name || "Unnamed File"}
                 >
                   <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
                     <Package className="w-5 h-5 text-blue-600" />
@@ -208,7 +217,7 @@ const DashboardHome = () => {
                       {new Date(upload.created_at).toLocaleString()}
                     </p>
                   </div>
-                </div>
+                </button>
               ))
             )}
           </div>

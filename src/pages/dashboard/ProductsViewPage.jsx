@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { AsyncPaginate } from "react-select-async-paginate";
 import { useParams, useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
 import { supabase } from "../../config/supabase";
@@ -10,8 +11,47 @@ import {
   Edit3,
   CheckCircle,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import toast from "react-hot-toast";
+
+// Modal component for confirmation
+const ConfirmModal = ({ open, onClose, onConfirm, productName, fileName }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
+        <h2 className="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+          <Trash2 className="w-5 h-5 text-red-600" />
+          Delete Product
+        </h2>
+        <p className="mb-6 text-gray-700">
+          Are you sure you want to delete{" "}
+          <span className="font-semibold text-gray-900">{productName}</span>{" "}
+          from{" "}
+          <span className="font-semibold text-blue-700">
+            Filename: {fileName}
+          </span>
+          ? This cannot be undone.
+        </p>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-5 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors font-semibold"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-5 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /**
  * OPTIMIZED API USAGE:
@@ -28,7 +68,108 @@ let cacheTimestamp = null;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 const ProductsViewPage = () => {
+  // State for delete modal
+  const [deleteModal, setDeleteModal] = useState({
+    open: false,
+    product: null,
+  });
+  // Handler for deleting a product
+  const handleDeleteProduct = async (product) => {
+    try {
+      // Remove from DB if product has a DB id
+      if (product.id) {
+        const { error } = await supabase
+          .from("products")
+          .delete()
+          .eq("id", product.id)
+          .eq("user_id", user?.id);
+        if (error) throw error;
+      }
+
+      // Remove from local state
+      const updatedProducts = products.filter((p) => p.id !== product.id);
+      setProducts(updatedProducts);
+
+      // Update CSV in Supabase Storage
+      // Reconstruct CSV: get headers from the original file, then join updatedProducts
+      const decodedUrl = decodeURIComponent(fileUrl);
+      // Download the original file to get headers
+      const { data, error: downloadError } = await supabase.storage
+        .from("product-uploads")
+        .download(decodedUrl);
+      if (downloadError) throw downloadError;
+      const text = await data.text();
+      const lines = text.split("\n").filter((line) => line.trim());
+      const headers = lines[0];
+      // Map updatedProducts to CSV lines (ensure order matches headers)
+      const toCsvLine = (prod) =>
+        [
+          prod.name,
+          prod.description,
+          "", // SKU (if needed, else blank)
+          prod.category,
+          prod.subcategory,
+          prod.parttype,
+          prod.confidence,
+        ]
+          .map((v = "") => `"${(v || "").replace(/"/g, '""')}"`)
+          .join(",");
+      const newCsv = [headers, ...updatedProducts.map(toCsvLine)].join("\n");
+      // Upload new CSV to storage (overwrite)
+      const { error: uploadError } = await supabase.storage
+        .from("product-uploads")
+        .upload(decodedUrl, new Blob([newCsv], { type: "text/csv" }), {
+          upsert: true,
+        });
+      if (uploadError) throw uploadError;
+
+      toast.success(`Deleted product: ${product.name || "Unnamed Product"}`);
+    } catch (error) {
+      toast.error("Failed to delete product: " + error.message);
+    } finally {
+      setDeleteModal({ open: false, product: null });
+    }
+  };
   const { fileUrl } = useParams();
+  const [deleting, setDeleting] = useState(false);
+  // Extract file name from fileUrl
+  const getFileName = (url) => {
+    if (!url) return "";
+    const decoded = decodeURIComponent(url);
+    const parts = decoded.split("/");
+    const rawName = parts[parts.length - 1];
+    // Remove leading number and dash if present
+    return rawName.replace(/^\d+-/, "");
+  };
+  const fileName = getFileName(fileUrl);
+  // Delete all products for this file and the file itself
+  const handleDeleteFile = async () => {
+    if (!fileUrl) return;
+    if (
+      !window.confirm(
+        `Are you sure you want to delete '${fileName}' and all its products? This cannot be undone.`
+      )
+    )
+      return;
+    setDeleting(true);
+    try {
+      const decodedUrl = decodeURIComponent(fileUrl);
+      // Delete products from DB
+      await supabase
+        .from("products")
+        .delete()
+        .eq("file_url", decodedUrl)
+        .eq("user_id", user?.id);
+      // Delete file from storage
+      await supabase.storage.from("product-uploads").remove([decodedUrl]);
+      toast.success("File and products deleted");
+      navigate("/reports");
+    } catch (error) {
+      toast.error("Failed to delete file: " + error.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
   const [products, setProducts] = useState([]);
@@ -413,29 +554,38 @@ const ProductsViewPage = () => {
     <div className="min-h-screen bg-gray-50 py-5">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-            <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <button
-                  onClick={() => navigate("/reports")}
-                  className="p-2 hover:bg-white rounded-lg transition-colors"
-                >
-                  <ArrowLeft className="w-6 h-6 text-gray-600" />
-                </button>
-                <div>
-                  <h1 className="sm:text-3xl text-2xl font-bold text-gray-800">
-                    Products View
-                  </h1>
-                  <p className="text-gray-600">View and edit product information</p>
-                </div>
-              </div>
-              <div className="flex sm:items-center   w-full sm:w-fit space-x-2 sm:mt-0 mt-5 bg-white px-4  py-2 rounded-lg border border-gray-200">
-                <Package className="w-5 h-5  text-blue-500" />
-                <span className="font-semibold  text-gray-700">
-                  {products.length} Products
-                </span>
-              </div>
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => navigate("/reports")}
+              className="p-2 hover:bg-white rounded-lg transition-colors"
+            >
+              <ArrowLeft className="w-6 h-6 text-gray-600" />
+            </button>
+            <div>
+              <h1 className="sm:text-3xl text-2xl font-bold text-gray-800 flex items-center gap-2">
+                Products View
+              </h1>
             </div>
+          </div>
 
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-fit sm:mt-0 mt-5">
+            <div className="flex items-center bg-white px-4 py-2 rounded-lg border border-gray-200">
+              <Package className="w-5 h-5 text-blue-500" />
+              <span className="font-semibold text-gray-700 ml-2">
+                {products.length} Products
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center space-x-4 mb-4">
+          <span
+            className="text-2xl font-normal text-gray-800 ml-2   block"
+            title={fileName}
+          >
+            <span>File Name: {fileName}</span>
+          </span>
+        </div>
         {/* Products Table */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
@@ -528,18 +678,35 @@ const ProductsViewPage = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex justify-center">
+                      <div className="flex justify-center gap-2">
                         <button
                           onClick={() => handleEdit(product)}
-                          className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center space-x-2"
+                          className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center"
                         >
                           <Edit3 className="w-4 h-4" />
-                          <span className="text-sm font-semibold">Edit</span>
+                          {/* <span className="text-sm font-semibold">Edit</span> */}
+                        </button>
+                        <button
+                          onClick={() =>
+                            setDeleteModal({ open: true, product })
+                          }
+                          className="p-2 bg-red-100 hover:bg-red-200 rounded-lg transition-colors flex items-center"
+                          title="Delete product"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-600" />
                         </button>
                       </div>
                     </td>
                   </tr>
                 ))}
+                {/* Delete Product Modal */}
+                <ConfirmModal
+                  open={deleteModal.open}
+                  onClose={() => setDeleteModal({ open: false, product: null })}
+                  onConfirm={() => handleDeleteProduct(deleteModal.product)}
+                  productName={deleteModal.product?.name || "Unnamed Product"}
+                  fileName={fileName}
+                />
               </tbody>
             </table>
           </div>
@@ -564,7 +731,7 @@ const ProductsViewPage = () => {
               <div className="p-6 space-y-6">
                 {/* Product Info Section */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center">
+                  <label className="flex text-sm font-semibold text-gray-700 mb-2 items-center">
                     <CheckCircle className="w-4 h-4 mr-2 text-green-500" />
                     Product Title
                   </label>
@@ -594,66 +761,224 @@ const ProductsViewPage = () => {
 
                 {/* Category Section */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Category AsyncPaginate */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
                       Category
                     </label>
-                    <select
-                      value={editingProduct?.category || ""}
-                      onChange={(e) =>
-                        handleInputChange("category", e.target.value)
+                    <AsyncPaginate
+                      value={
+                        editingProduct?.category
+                          ? {
+                              value: editingProduct.category,
+                              label: editingProduct.category,
+                            }
+                          : null
                       }
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
-                    >
-                      <option value="">Select Category</option>
-                      {categories.map((cat) => (
-                        <option key={cat.id} value={cat.name}>
-                          {cat.name}
-                        </option>
-                      ))}
-                    </select>
+                      loadOptions={async (
+                        inputValue,
+                        loadedOptions,
+                        { page }
+                      ) => {
+                        const PAGE_SIZE = 10;
+                        let query = supabase
+                          .from("categories")
+                          .select("name")
+                          .order("name")
+                          .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+                        if (inputValue) {
+                          query = query.ilike("name", `%${inputValue}%`);
+                        }
+                        const { data, error } = await query;
+                        if (error) {
+                          return { options: [], hasMore: false };
+                        }
+                        return {
+                          options: (data || []).map((cat) => ({
+                            value: cat.name,
+                            label: cat.name,
+                          })),
+                          hasMore: (data || []).length === PAGE_SIZE,
+                          additional: { page: page + 1 },
+                        };
+                      }}
+                      onChange={(option) =>
+                        handleInputChange(
+                          "category",
+                          option ? option.value : ""
+                        )
+                      }
+                      additional={{ page: 1 }}
+                      isClearable
+                      placeholder="Select Category..."
+                      menuPlacement="top"
+                      menuPortalTarget={
+                        typeof window !== "undefined" ? document.body : null
+                      }
+                      styles={{
+                        container: (base) => ({ ...base, width: "100%" }),
+                        menu: (base) => ({ ...base, zIndex: 9999 }),
+                        menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                        menuList: (base) => ({
+                          ...base,
+                          maxHeight: 240,
+                          minHeight: 120,
+                          overflowY: "auto",
+                        }),
+                      }}
+                    />
                   </div>
-
+                  {/* Subcategory AsyncPaginate */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
                       Subcategory
                     </label>
-                    <select
-                      value={editingProduct?.subcategory || ""}
-                      onChange={(e) =>
-                        handleInputChange("subcategory", e.target.value)
+                    <AsyncPaginate
+                      value={
+                        editingProduct?.subcategory
+                          ? {
+                              value: editingProduct.subcategory,
+                              label: editingProduct.subcategory,
+                            }
+                          : null
                       }
-                      disabled={!editingProduct?.category}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                    >
-                      <option value="">Select Subcategory</option>
-                      {filteredSubcategories.map((sub) => (
-                        <option key={sub.id} value={sub.name}>
-                          {sub.name}
-                        </option>
-                      ))}
-                    </select>
+                      loadOptions={async (
+                        inputValue,
+                        loadedOptions,
+                        { page }
+                      ) => {
+                        const PAGE_SIZE = 10;
+                        if (!editingProduct?.category)
+                          return { options: [], hasMore: false };
+                        // Find category id
+                        const cat = categories.find(
+                          (c) => c.name === editingProduct.category
+                        );
+                        if (!cat) return { options: [], hasMore: false };
+                        let query = supabase
+                          .from("subcategories")
+                          .select("name")
+                          .eq("category_id", cat.id)
+                          .order("name")
+                          .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+                        if (inputValue) {
+                          query = query.ilike("name", `%${inputValue}%`);
+                        }
+                        const { data, error } = await query;
+                        if (error) {
+                          return { options: [], hasMore: false };
+                        }
+                        return {
+                          options: (data || []).map((sub) => ({
+                            value: sub.name,
+                            label: sub.name,
+                          })),
+                          hasMore: (data || []).length === PAGE_SIZE,
+                          additional: { page: page + 1 },
+                        };
+                      }}
+                      onChange={(option) =>
+                        handleInputChange(
+                          "subcategory",
+                          option ? option.value : ""
+                        )
+                      }
+                      additional={{ page: 1 }}
+                      isClearable
+                      placeholder="Select Subcategory..."
+                      isDisabled={!editingProduct?.category}
+                      menuPlacement="top"
+                      menuPortalTarget={
+                        typeof window !== "undefined" ? document.body : null
+                      }
+                      styles={{
+                        container: (base) => ({ ...base, width: "100%" }),
+                        menu: (base) => ({ ...base, zIndex: 9999 }),
+                        menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                        menuList: (base) => ({
+                          ...base,
+                          maxHeight: 240,
+                          minHeight: 120,
+                          overflowY: "auto",
+                        }),
+                      }}
+                    />
                   </div>
-
+                  {/* Part Type AsyncPaginate */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
                       Part Type
                     </label>
-                    <select
-                      value={editingProduct?.parttype || ""}
-                      onChange={(e) =>
-                        handleInputChange("parttype", e.target.value)
+                    <AsyncPaginate
+                      value={
+                        editingProduct?.parttype
+                          ? {
+                              value: editingProduct.parttype,
+                              label: editingProduct.parttype,
+                            }
+                          : null
                       }
-                      disabled={!editingProduct?.subcategory}
-                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
-                    >
-                      <option value="">Select Part Type</option>
-                      {filteredParttypes.map((pt) => (
-                        <option key={pt.id} value={pt.name}>
-                          {pt.name}
-                        </option>
-                      ))}
-                    </select>
+                      loadOptions={async (
+                        inputValue,
+                        loadedOptions,
+                        { page }
+                      ) => {
+                        const PAGE_SIZE = 5;
+                        if (!editingProduct?.subcategory)
+                          return { options: [], hasMore: false };
+                        // Find subcategory id
+                        const sub = subcategories.find(
+                          (s) => s.name === editingProduct.subcategory
+                        );
+                        if (!sub) return { options: [], hasMore: false };
+                        let query = supabase
+                          .from("parttypes")
+                          .select("name")
+                          .eq("subcategory_id", sub.id)
+                          .order("name")
+                          .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+                        if (inputValue) {
+                          query = query.ilike("name", `%${inputValue}%`);
+                        }
+                        const { data, error } = await query;
+                        if (error) {
+                          return { options: [], hasMore: false };
+                        }
+                        return {
+                          options: (data || []).map((pt) => ({
+                            value: pt.name,
+                            label: pt.name,
+                          })),
+                          hasMore: (data || []).length === PAGE_SIZE,
+                          additional: { page: page + 1 },
+                        };
+                      }}
+                      onChange={(option) =>
+                        handleInputChange(
+                          "parttype",
+                          option ? option.value : ""
+                        )
+                      }
+                      additional={{ page: 1 }}
+                      isClearable
+                      placeholder="Select Part Type..."
+                      isDisabled={!editingProduct?.subcategory}
+                      menuPlacement="top"
+                      menuPortalTarget={
+                        typeof window !== "undefined" ? document.body : null
+                      }
+                      styles={{
+                        container: (base) => ({ ...base, width: "100%" }),
+                        menu: (base) => ({ ...base, zIndex: 9999 }),
+                        menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+                        menuList: (base) => ({
+                          ...base,
+                          maxHeight: 240,
+                          minHeight: 120,
+                          overflowY: "auto",
+                        }),
+                      }}
+                    />
                   </div>
                 </div>
               </div>
