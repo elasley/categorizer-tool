@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { AsyncPaginate } from "react-select-async-paginate";
 import { useSelector } from "react-redux";
 import {
   Search,
@@ -9,6 +10,8 @@ import {
   Save,
   X,
   AlertCircle,
+  Loader2,
+  Ellipsis,
 } from "lucide-react";
 import { supabase } from "../../config/supabase";
 import { generateEmbedding } from "../../utils/embeddingGenerator";
@@ -267,7 +270,6 @@ const SubcategoriesPage = () => {
           )
           .ilike("name", `%${searchTerm}%`)
           .order("name");
-          
 
         if (user?.id) {
           query = query.eq("user_id", user.id);
@@ -601,35 +603,35 @@ const AddEditModal = ({
   user,
   isEdit,
 }) => {
-  const [categories, setCategories] = useState([]);
-  const [loadingCategories, setLoadingCategories] = useState(true);
-
-  useEffect(() => {
-    const fetchCategories = async () => {
-      setLoadingCategories(true);
-      try {
-        let query = supabase
-          .from("categories")
-          .select("id, name")
-          .order("name");
-
-        if (user?.id) {
-          query = query.eq("user_id", user.id);
-        }
-
-        const { data, error } = await query;
-        if (error) throw error;
-        setCategories(data || []);
-      } catch (error) {
-        console.error("Error loading categories:", error);
-        toast.error("Failed to load categories");
-      } finally {
-        setLoadingCategories(false);
-      }
+  // AsyncPaginate loader for react-select
+  const loadCategoryOptions = async (inputValue, loadedOptions, { page }) => {
+    const PAGE_SIZE = 5;
+    let query = supabase
+      .from("categories")
+      .select("id, name")
+      .order("name")
+      .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+    if (user?.id) {
+      query = query.eq("user_id", user.id);
+    }
+    if (inputValue) {
+      query = query.ilike("name", `%${inputValue}%`);
+    }
+    const { data, error } = await query;
+    if (error) {
+      return {
+        options: [],
+        hasMore: false,
+      };
+    }
+    return {
+      options: (data || []).map((cat) => ({ value: cat.id, label: cat.name })),
+      hasMore: (data || []).length === PAGE_SIZE,
+      additional: {
+        page: page + 1,
+      },
     };
-
-    fetchCategories();
-  }, [user?.id]);
+  };
 
   return (
     <Modal title={title} onClose={onClose}>
@@ -651,31 +653,62 @@ const AddEditModal = ({
           <label className="block text-sm font-medium text-gray-700 mb-2">
             {isEdit ? "Parent Category" : "Categories"}
           </label>
-          {loadingCategories ? (
-            <div className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50">
-              <div className="animate-pulse h-5 bg-gray-200 rounded"></div>
-            </div>
-          ) : (
-            <select
-              value={formData.categoryId}
-              onChange={(e) =>
-                setFormData({ ...formData, categoryId: e.target.value })
-              }
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-            >
-              {!isEdit && <option value="">Select categories</option>}
-              {categories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <AsyncPaginate
+            value={
+              formData.categoryId
+                ? { value: formData.categoryId, label: "" }
+                : null
+            }
+            loadOptions={loadCategoryOptions}
+            additional={{ page: 1 }}
+            onChange={(option) =>
+              setFormData({
+                ...formData,
+                categoryId: option ? option.value : "",
+              })
+            }
+            placeholder="Search or select category..."
+            isClearable
+            styles={{
+              container: (base) => ({
+                ...base,
+                width: "100%",
+              }),
+              menu: (base) => ({
+                ...base,
+                zIndex: 9999,
+                height: "250px",
+                border: "1px solid #D1D5DB",
+              }),
+              menuList: (base) => ({
+                ...base,
+                maxHeight: 240, // or any px value you want (e.g., 240px = 6 items at 40px each)
+                minHeight: 240,
+                overflowY: "auto",
+              }),
+            }}
+            loadingMessage={() => (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  height: 40,
+                  gap: 8,
+                }}
+              >
+                <Ellipsis
+                  className="animate-pulse text-purple-600 mr-2"
+                  size={30}
+                />
+              </div>
+            )}
+          />
         </div>
         <div className="flex gap-3 mt-6">
           <button
             onClick={onSave}
-            disabled={saving || loadingCategories}
+            disabled={saving}
             className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? (
