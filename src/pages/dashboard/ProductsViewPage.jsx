@@ -413,28 +413,28 @@ const ProductsViewPage = () => {
     <div className="min-h-screen bg-gray-50 py-5">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={() => navigate("/dashboard/reports")}
-              className="p-2 hover:bg-white rounded-lg transition-colors"
-            >
-              <ArrowLeft className="w-6 h-6 text-gray-600" />
-            </button>
-            <div>
-              <h1 className="sm:text-3xl text-2xl font-bold text-gray-800">
-                Products View
-              </h1>
-              <p className="text-gray-600">View and edit product information</p>
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <button
+                  onClick={() => navigate("/reports")}
+                  className="p-2 hover:bg-white rounded-lg transition-colors"
+                >
+                  <ArrowLeft className="w-6 h-6 text-gray-600" />
+                </button>
+                <div>
+                  <h1 className="sm:text-3xl text-2xl font-bold text-gray-800">
+                    Products View
+                  </h1>
+                  <p className="text-gray-600">View and edit product information</p>
+                </div>
+              </div>
+              <div className="flex sm:items-center   w-full sm:w-fit space-x-2 sm:mt-0 mt-5 bg-white px-4  py-2 rounded-lg border border-gray-200">
+                <Package className="w-5 h-5  text-blue-500" />
+                <span className="font-semibold  text-gray-700">
+                  {products.length} Products
+                </span>
+              </div>
             </div>
-          </div>
-          <div className="flex sm:items-center   w-full sm:w-fit space-x-2 sm:mt-0 mt-5 bg-white px-4  py-2 rounded-lg border border-gray-200">
-            <Package className="w-5 h-5  text-blue-500" />
-            <span className="font-semibold  text-gray-700">
-              {products.length} Products
-            </span>
-          </div>
-        </div>
 
         {/* Products Table */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">

@@ -12,6 +12,9 @@ import {
   Download,
   Eye,
   Search,
+  MoreVertical,
+  Trash2,
+  X,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -30,6 +33,130 @@ const TableSkeleton = ({ rows = 8 }) => (
   </tbody>
 );
 
+// Actions dropdown component
+const ActionsDropdown = ({ report, onView, onDownload, onDelete, open, setOpen }) => {
+  const buttonRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const [dropdownPosition, setDropdownPosition] = useState('bottom');
+
+  // Calculate dropdown position based on button location
+  useEffect(() => {
+    if (open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const dropdownHeight = 140; // Approximate height of dropdown
+      
+      // If button is in bottom 40% of screen, show dropdown above
+      if (rect.bottom > viewportHeight * 0.6) {
+        setDropdownPosition('top');
+      } else {
+        setDropdownPosition('bottom');
+      }
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    
+    const handleClickOutside = (e) => {
+      if (
+        buttonRef.current &&
+        !buttonRef.current.contains(e.target) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target)
+      ) {
+        setOpen(false);
+      }
+    };
+
+    // Handle scroll to close dropdown when button goes off-screen
+    const handleScroll = () => {
+      if (!buttonRef.current) return;
+      
+      const rect = buttonRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      
+      // Close dropdown if button is completely off-screen
+      if (rect.bottom < -50 || rect.top > viewportHeight + 50) {
+        setOpen(false);
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      document.addEventListener("click", handleClickOutside);
+      document.addEventListener("scroll", handleScroll, true);
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener("click", handleClickOutside);
+      document.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [open, setOpen]);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(!open);
+        }}
+        className="p-2 text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+        title="More actions"
+      >
+        <MoreVertical className="w-4 h-4" />
+      </button>
+      
+      {open && (
+        <div
+          ref={dropdownRef}
+          className={`absolute right-0 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 ${
+            dropdownPosition === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'
+          }`}
+        >
+          <div className="py-1">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onView();
+                setOpen(false);
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Eye className="w-4 h-4" />
+              View File
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDownload();
+                setOpen(false);
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Download
+            </button>
+            <hr className="my-1" />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+                setOpen(false);
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ReportsPage = () => {
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
@@ -44,6 +171,10 @@ const ReportsPage = () => {
   const [totalCount, setTotalCount] = useState(0);
   const searchTimeout = useRef(null);
   const observerTarget = useRef(null);
+  const [openDropdown, setOpenDropdown] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteReport, setDeleteReport] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const ITEMS_PER_PAGE = 20; // Fetch data in batches of 20
 
@@ -60,7 +191,7 @@ const ReportsPage = () => {
 
         let query = supabase
           .from("upload_history")
-          .select("*, products:products(count)", { count: "exact" })
+          .select("*", { count: "exact" })
           .eq("user_id", user?.id)
           .order("created_at", { ascending: false });
 
@@ -187,6 +318,59 @@ const ReportsPage = () => {
     // Navigate to the new products view page with the file URL
     const encodedUrl = encodeURIComponent(fileUrl);
     navigate(`/products-view/${encodedUrl}`);
+  };
+
+  // Delete report
+  const handleDeleteReport = async () => {
+    if (!deleteReport) return;
+
+    setDeleting(true);
+    try {
+      // First delete associated products (if they exist)
+      const { error: productsError } = await supabase
+        .from("products")
+        .delete()
+        .eq("upload_history_id", deleteReport.id);
+
+      // Don't throw error if products don't exist or foreign key doesn't match
+      if (productsError && !productsError.message.includes("does not exist")) {
+        console.warn("Products deletion warning:", productsError);
+      }
+
+      // Delete file from storage if exists
+      if (deleteReport.file_url) {
+        const { error: storageError } = await supabase.storage
+          .from("product-uploads")
+          .remove([deleteReport.file_url]);
+        
+        // Don't throw error for storage deletion as file might not exist
+        if (storageError) {
+          console.warn("Storage deletion warning:", storageError);
+        }
+      }
+
+      // Finally delete from upload_history table
+      const { error: historyError } = await supabase
+        .from("upload_history")
+        .delete()
+        .eq("id", deleteReport.id);
+
+      if (historyError) throw historyError;
+
+      toast.success("Report deleted successfully");
+      
+      // Refresh the reports list
+      setReports(prev => prev.filter(r => r.id !== deleteReport.id));
+      setTotalCount(prev => prev - 1);
+      
+      setShowDeleteModal(false);
+      setDeleteReport(null);
+    } catch (error) {
+      console.error("Error deleting report:", error);
+      toast.error(`Failed to delete report: ${error.message}`);
+    } finally {
+      setDeleting(false);
+    }
   };
 
 
@@ -483,36 +667,19 @@ const ReportsPage = () => {
                           </div>
                         </td>
                         <td className="px-3 py-4 align-top">
-                          <div className="flex items-center justify-center space-x-1">
+                          <div className="flex items-center justify-center">
                             {report.file_url && (
-                              <>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    viewFile(report.file_url, report.file_name);
-                                  }}
-                                  className="px-2 py-1 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-all flex items-center space-x-1"
-                                  title="View file"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                  <span className="text-xs font-semibold hidden sm:inline">
-                                    View
-                                  </span>
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    downloadFile(
-                                      report.file_url,
-                                      report.file_name
-                                    );
-                                  }}
-                                  className="p-2 text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-all"
-                                  title="Download file"
-                                >
-                                  <Download className="w-4 h-4" />
-                                </button>
-                              </>
+                              <ActionsDropdown
+                                report={report}
+                                onView={() => viewFile(report.file_url, report.file_name)}
+                                onDownload={() => downloadFile(report.file_url, report.file_name)}
+                                onDelete={() => {
+                                  setDeleteReport(report);
+                                  setShowDeleteModal(true);
+                                }}
+                                open={openDropdown === report.id}
+                                setOpen={(isOpen) => setOpenDropdown(isOpen ? report.id : null)}
+                              />
                             )}
                           </div>
                         </td>
@@ -571,6 +738,73 @@ const ReportsPage = () => {
           )}
         </div>
 
+        {/* Delete Confirmation Modal */}
+        {showDeleteModal && deleteReport && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+              <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Delete Report
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setDeleteReport(null);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg"
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+              <div className="p-6">
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-red-100 rounded-lg">
+                      <AlertCircle className="w-5 h-5 text-red-600" />
+                    </div>
+                    <div>
+                      <p className="text-gray-900 font-medium mb-1">
+                        Delete "{deleteReport.file_name}"?
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        This will permanently delete the report and all associated products ({deleteReport.products_count || 0} products).
+                      </p>
+                      <p className="text-sm text-gray-600 mt-2">
+                        This action cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={handleDeleteReport}
+                      disabled={deleting}
+                      className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deleting ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          Deleting...
+                        </>
+                      ) : (
+                        "Delete Report"
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowDeleteModal(false);
+                        setDeleteReport(null);
+                      }}
+                      disabled={deleting}
+                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
