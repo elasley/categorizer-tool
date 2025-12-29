@@ -44,7 +44,6 @@ const Login = () => {
           <div className="inline-flex items-center justify-center mb-4">
             <Logo />
           </div>
-         
         </div>
 
         {/* Form Card */}
@@ -131,6 +130,13 @@ const Login = () => {
                   {errors.password.message}
                 </p>
               )}
+
+              <Link
+                to="/forgot-password"
+                className="text-sm mt-1 w-full flex items-center justify-end font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+              >
+                Forgot password?
+              </Link>
             </div>
 
             {/* Submit Button */}

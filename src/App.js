@@ -9,11 +9,15 @@ import { store, persistor } from "./store";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 import VerifyOtp from "./pages/auth/VerifyOtp";
+import ForgotPassword from "./pages/auth/ForgotPassword";
+import ResetPassword from "./pages/auth/ResetPassword";
 
 // Dashboard Layout
 import DashboardLayout from "./components/layout/DashboardLayout";
 import DashboardHome from "./pages/dashboard/DashboardHome";
 import Settings from "./pages/dashboard/Settings";
+// ...existing code...
+
 import Profile from "./pages/dashboard/Profile";
 import Categories from "./pages/dashboard/Categories";
 import CategoriesPage from "./pages/dashboard/CategoriesPage";
@@ -25,12 +29,25 @@ import PrivateRoute from "./components/PrivateRoute";
 import PublicRoute from "./components/PublicRoute";
 import LoadingSpinner from "./components/LoadingSpinner";
 import { SplineIcon } from "lucide-react";
-// Import existing categorization tool
 import AcesPiesCategorizationTool from "./components/AcesPiesCategorizationTool";
-
 import "./App.css";
 
+// Debug log to help diagnose reset password flow
+console.log("PATH:", window.location.pathname, "HASH:", window.location.hash);
+
 function App() {
+  // Force redirect to /reset-password if type=recovery is in the URL hash
+  React.useEffect(() => {
+    const hash = window.location.hash;
+    if (
+      hash &&
+      hash.includes("type=recovery") &&
+      window.location.pathname !== "/reset-password"
+    ) {
+      window.location.replace("/reset-password" + window.location.hash);
+    }
+  }, []);
+
   return (
     <Provider store={store}>
       <Toaster
@@ -71,6 +88,22 @@ function App() {
               element={
                 <PublicRoute>
                   <Login />
+                </PublicRoute>
+              }
+            />
+            <Route
+              path="/forgot-password"
+              element={
+                <PublicRoute>
+                  <ForgotPassword />
+                </PublicRoute>
+              }
+            />
+            <Route
+              path="/reset-password"
+              element={
+                <PublicRoute>
+                  <ResetPassword />
                 </PublicRoute>
               }
             />
