@@ -106,10 +106,6 @@ const SubcategoriesPage = () => {
         .order("name")
         .range(from, to);
 
-      if (user?.id) {
-        query = query.eq("user_id", user.id);
-      }
-
       const { data, error } = await query;
 
       if (error) throw error;
@@ -270,10 +266,6 @@ const SubcategoriesPage = () => {
           )
           .ilike("name", `%${searchTerm}%`)
           .order("name");
-
-        if (user?.id) {
-          query = query.eq("user_id", user.id);
-        }
 
         const { data, error, count } = await query;
         if (error) throw error;
@@ -612,9 +604,6 @@ const AddEditModal = ({
       .select("id, name")
       .order("name")
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-    if (user?.id) {
-      query = query.eq("user_id", user.id);
-    }
     if (inputValue) {
       query = query.ilike("name", `%${inputValue}%`);
     }

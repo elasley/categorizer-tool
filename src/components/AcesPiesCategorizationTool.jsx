@@ -466,7 +466,7 @@ const AcesPiesCategorizationTool = () => {
       toast.success(
         totalInserted > 0
           ? ` Added ${totalInserted} new items!
-            }`
+            `
           : ` All items already exist in database!`,
         { duration: 5000 }
       );

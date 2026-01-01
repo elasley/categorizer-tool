@@ -115,10 +115,6 @@ const ParttypesPage = () => {
         .order("name")
         .range(from, to);
 
-      if (user?.id) {
-        query = query.eq("user_id", user.id);
-      }
-
       const { data, error } = await query;
 
       if (error) throw error;
@@ -303,10 +299,6 @@ const ParttypesPage = () => {
           )
           .ilike("name", `%${searchTerm}%`)
           .order("name");
-
-        if (user?.id) {
-          query = query.eq("user_id", user.id);
-        }
 
         const { data, error, count } = await query;
         if (error) throw error;
@@ -656,9 +648,6 @@ const AddEditModal = ({
       .select("id, name, categories(id, name)")
       .order("name")
       .range(start, end);
-    if (user?.id) {
-      query = query.eq("user_id", user.id);
-    }
     if (inputValue) {
       query = query.ilike("name", `%${inputValue}%`);
     }

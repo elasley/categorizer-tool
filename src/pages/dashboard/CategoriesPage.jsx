@@ -31,6 +31,13 @@ const CategoriesPage = () => {
   const [deleting, setDeleting] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
+  const [selectedCategories, setSelectedCategories] = useState(new Set());
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [productsToDelete, setProductsToDelete] = useState([]);
+  const [categoriesToDelete, setCategoriesToDelete] = useState([]);
+  const [showProductsConfirmModal, setShowProductsConfirmModal] = useState(false);
+  const [isCascadeDelete, setIsCascadeDelete] = useState(false);
   const observerTarget = React.useRef(null);
   const hasLoadedRef = React.useRef(false);
 
@@ -45,10 +52,6 @@ const CategoriesPage = () => {
         .order("created_at", { ascending: false })
         .order("name", { ascending: true })
         .range(0, BATCH_SIZE - 1);
-
-      if (user?.id) {
-        query = query.eq("user_id", user.id);
-      }
 
       const { data, error, count } = await query;
 
@@ -77,10 +80,6 @@ const CategoriesPage = () => {
         .order("name")
         .range(from, to);
 
-      if (user?.id) {
-        query = query.eq("user_id", user.id);
-      }
-
       const { data, error } = await query;
 
       if (error) throw error;
@@ -96,16 +95,13 @@ const CategoriesPage = () => {
 
   // Load initial data once
   useEffect(() => {
-    if (!user?.id || hasLoadedRef.current) return;
-    hasLoadedRef.current = true;
+    hasLoadedRef.current = false;
     loadInitialData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, []);
 
   // Debounced search
   useEffect(() => {
-    if (!user?.id) return;
-
     if (searchTerm.trim() === "") {
       if (isSearching) {
         setIsSearching(false);
@@ -122,7 +118,7 @@ const CategoriesPage = () => {
 
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm, user?.id]);
+  }, [searchTerm]);
 
   const performSearch = async () => {
     setLoading(true);
@@ -133,10 +129,6 @@ const CategoriesPage = () => {
         .order("name")
         .range(0, BATCH_SIZE - 1)
         .ilike("name", `%${searchTerm}%`);
-
-      if (user?.id) {
-        query = query.eq("user_id", user.id);
-      }
 
       const { data, error, count } = await query;
 
@@ -245,6 +237,25 @@ const CategoriesPage = () => {
     setDeleting(true);
 
     try {
+      // Check if category has products
+      const { data: products, error: productsError } = await supabase
+        .from("products")
+        .select("id, name", { count: "exact" })
+        .eq("category_id", deleteItem.id);
+
+      if (productsError) throw productsError;
+
+      // If products exist, show confirmation modal
+      if (products && products.length > 0) {
+        setProductsToDelete(products);
+        setCategoriesToDelete([deleteItem.id]);
+        setIsCascadeDelete(false);
+        setShowProductsConfirmModal(true);
+        setDeleting(false);
+        return;
+      }
+
+      // No products, safe to delete category
       const { error } = await supabase
         .from("categories")
         .delete()
@@ -259,6 +270,133 @@ const CategoriesPage = () => {
       loadInitialData();
     } catch (error) {
       console.error("Error deleting:", error);
+      toast.error(`Failed to delete: ${error.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleToggleCategory = (categoryId) => {
+    const newSelected = new Set(selectedCategories);
+    if (newSelected.has(categoryId)) {
+      newSelected.delete(categoryId);
+    } else {
+      newSelected.add(categoryId);
+    }
+    setSelectedCategories(newSelected);
+    // Exit selection mode if all items are deselected
+    if (newSelected.size === 0) {
+      setIsSelectionMode(false);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (selectedCategories.size === categories.length && isSelectionMode) {
+      // Deselect all and exit selection mode
+      setSelectedCategories(new Set());
+      setIsSelectionMode(false);
+    } else {
+      // Enter selection mode and select all
+      setIsSelectionMode(true);
+      setSelectedCategories(new Set(categories.map((cat) => cat.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedCategories.size === 0) return;
+
+    setDeleting(true);
+
+    try {
+      const categoryIds = Array.from(selectedCategories);
+
+      // Check if any category has products
+      const { data: products, error: productsError } = await supabase
+        .from("products")
+        .select("id, name, category_id")
+        .in("category_id", categoryIds);
+
+      if (productsError) throw productsError;
+
+      // If products exist, show confirmation modal
+      if (products && products.length > 0) {
+        setProductsToDelete(products);
+        setCategoriesToDelete(categoryIds);
+        setIsCascadeDelete(false);
+        setShowProductsConfirmModal(true);
+        setDeleting(false);
+        return;
+      }
+
+      // No products, safe to delete categories
+      const { error } = await supabase
+        .from("categories")
+        .delete()
+        .in("id", categoryIds);
+
+      if (error) throw error;
+
+      toast.success(
+        `${categoryIds.length} categor${categoryIds.length > 1 ? "ies" : "y"} deleted successfully!`
+      );
+      setShowBulkDeleteModal(false);
+      setSelectedCategories(new Set());
+      setIsSelectionMode(false);
+      hasLoadedRef.current = false;
+      loadInitialData();
+    } catch (error) {
+      console.error("Error deleting categories:", error);
+      toast.error(`Failed to delete: ${error.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleConfirmCascadeDelete = async () => {
+    setDeleting(true);
+
+    try {
+      // Use stored category IDs (they are guaranteed to be valid)
+      const categoryIds = categoriesToDelete.filter((id) => id && id !== "undefined");
+
+      if (!categoryIds || categoryIds.length === 0) {
+        toast.error("No categories selected for deletion");
+        setDeleting(false);
+        return;
+      }
+
+      // Delete products first
+      const { error: productsDeleteError } = await supabase
+        .from("products")
+        .delete()
+        .in("category_id", categoryIds);
+
+      if (productsDeleteError) throw productsDeleteError;
+
+      // Then delete categories
+      const { error: categoriesDeleteError } = await supabase
+        .from("categories")
+        .delete()
+        .in("id", categoryIds);
+
+      if (categoriesDeleteError) throw categoriesDeleteError;
+
+      toast.success(
+        `${productsToDelete.length} product${productsToDelete.length > 1 ? "s" : ""} and ${categoryIds.length} categor${categoryIds.length > 1 ? "ies" : "y"} deleted successfully!`
+      );
+
+      setShowProductsConfirmModal(false);
+      setShowDeleteModal(false);
+      setShowBulkDeleteModal(false);
+      setDeleteItem(null);
+      setSelectedCategories(new Set());
+      setIsSelectionMode(false);
+      setProductsToDelete([]);
+      setCategoriesToDelete([]);
+      hasLoadedRef.current = false;
+      loadInitialData();
+    } catch (error) {
+      console.error("Error in cascade delete:", error);
       toast.error(`Failed to delete: ${error.message}`);
     } finally {
       setDeleting(false);
@@ -338,10 +476,40 @@ const CategoriesPage = () => {
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">
-            All Categories
-          </h2>
-          <span className="text-sm text-gray-500">{totalCount} categories</span>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-gray-900">
+              All Categories
+            </h2>
+            {selectedCategories.size > 0 && (
+              <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
+                {selectedCategories.size} selected
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {selectedCategories.size > 0 && (
+              <button
+                onClick={() => setShowBulkDeleteModal(true)}
+                className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 text-sm"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete ({selectedCategories.size})
+              </button>
+            )}
+            {categories.length > 0 && (
+              <button
+                onClick={handleSelectAll}
+                className={`px-3 py-2 rounded-lg flex items-center gap-2 text-sm ${
+                  isSelectionMode
+                    ? "bg-blue-600 text-white hover:bg-blue-700"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                {isSelectionMode ? "Deselect All" : "Select All"}
+              </button>
+            )}
+            <span className="text-sm text-gray-500">{totalCount} categories</span>
+          </div>  
         </div>
 
         <div className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
@@ -360,9 +528,19 @@ const CategoriesPage = () => {
               {categories.map((category) => (
                 <div
                   key={category.id}
-                  className="p-4 hover:bg-gray-50 transition-colors flex items-center justify-between"
+                  className={`p-4 hover:bg-gray-50 transition-colors flex items-center justify-between ${
+                    selectedCategories.has(category.id) ? "bg-blue-50" : ""
+                  }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-1">
+                    {isSelectionMode && (
+                      <input
+                        type="checkbox"
+                        checked={selectedCategories.has(category.id)}
+                        onChange={() => handleToggleCategory(category.id)}
+                        className="w-4 h-4 cursor-pointer"
+                      />
+                    )}
                     <div className="p-2 bg-blue-100 rounded-lg">
                       <Tag className="w-5 h-5 text-blue-600" />
                     </div>
@@ -560,6 +738,120 @@ const CategoriesPage = () => {
                 }}
                 disabled={deleting}
                 className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Bulk Delete Modal */}
+      {showBulkDeleteModal && (
+        <Modal
+          title="Delete Multiple Categories"
+          onClose={() => {
+            setShowBulkDeleteModal(false);
+          }}
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-100 rounded-lg">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <p className="text-gray-900 font-medium mb-1">
+                  Delete {selectedCategories.size} categor{selectedCategories.size > 1 ? "ies" : "y"}?
+                </p>
+                <p className="text-sm text-gray-600">This cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleBulkDelete}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowBulkDeleteModal(false);
+                }}
+                disabled={deleting}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Products Confirmation Modal */}
+      {showProductsConfirmModal && productsToDelete.length > 0 && (
+        <Modal
+          title="Products Assigned to Category"
+          onClose={() => {
+            setShowProductsConfirmModal(false);
+            setProductsToDelete([]);
+          }}
+        >
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-100 rounded-lg">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <p className="text-gray-900 font-bold mb-1 text-lg">
+                  {productsToDelete.length} product{productsToDelete.length > 1 ? "s" : ""} found
+                </p>
+                <p className="text-sm text-gray-600">
+                  {productsToDelete.length} product{productsToDelete.length > 1 ? "s are" : " is"} assigned to this category. Delete the category and all these products?
+                </p>
+              </div>
+            </div>
+
+          
+
+            {/* Warning */}
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-xs text-red-700 font-semibold">⚠️ This action cannot be undone</p>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleConfirmCascadeDelete}
+                disabled={deleting}
+                className="flex-1 px-4 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {deleting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Delete All ({productsToDelete.length})
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowProductsConfirmModal(false);
+                  setProductsToDelete([]);
+                }}
+                disabled={deleting}
+                className="px-4 py-3 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Cancel
               </button>
