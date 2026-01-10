@@ -979,6 +979,7 @@ export const batchCategorizeWithOpenAI = async (
   for (let i = 0; i < final.length; i++) {
     const product = final[i];
     
+    
     // If product has no category OR empty category, use local categorizer
     if (!product.suggestedCategory || product.suggestedCategory === "") {
       uncategorizedCount++;
