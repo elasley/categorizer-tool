@@ -12,6 +12,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { stripHtmlTags } from "../utils/textUtils";
+
+// ✅ Component optimized with React.memo export (see bottom of file)
 const ProductRow = ({
   product,
   onUpdate,
@@ -797,4 +799,16 @@ const ProductRow = ({
   );
 };
 
-export default ProductRow;
+// ✅ PERFORMANCE: Export memoized component with custom comparison
+// Only re-renders if these specific props change
+export default React.memo(ProductRow, (prevProps, nextProps) => {
+  // Custom comparison function for better performance
+  return (
+    prevProps.product.id === nextProps.product.id &&
+    prevProps.product.suggestedCategory === nextProps.product.suggestedCategory &&
+    prevProps.product.suggestedSubcategory === nextProps.product.suggestedSubcategory &&
+    prevProps.product.suggestedPartType === nextProps.product.suggestedPartType &&
+    prevProps.product.confidence === nextProps.product.confidence &&
+    prevProps.confidenceThreshold === nextProps.confidenceThreshold
+  );
+});

@@ -308,15 +308,38 @@ export const batchGetCachedClassifications = async (products) => {
       )
     );
 
-    const { data: exactMatches, error: exactError } = await supabase
-      .from("product_classifications")
-      .select("*")
-      .in("product_hash", hashes);
-
-    if (exactError) {
-      console.warn("⚠️ Error in exact hash lookup:", exactError);
-      return cacheMap; // Return empty map on error
+    // ✅ FIX: Split hashes into chunks to avoid URL length limits (max ~500 hashes per request)
+    const CHUNK_SIZE = 500;
+    const hashChunks = [];
+    for (let i = 0; i < hashes.length; i += CHUNK_SIZE) {
+      hashChunks.push(hashes.slice(i, i + CHUNK_SIZE));
     }
+
+    console.log(`📦 Split ${hashes.length} hashes into ${hashChunks.length} chunks`);
+
+    // Process each chunk
+    const allExactMatches = [];
+    for (let i = 0; i < hashChunks.length; i++) {
+      const chunk = hashChunks[i];
+      console.log(`📦 Processing chunk ${i + 1}/${hashChunks.length} (${chunk.length} hashes)...`);
+      
+      const { data: chunkMatches, error: chunkError } = await supabase
+        .from("product_classifications")
+        .select("*")
+        .in("product_hash", chunk);
+
+      if (chunkError) {
+        console.warn(`⚠️ Error in chunk ${i + 1} hash lookup:`, chunkError);
+        continue; // Skip this chunk, continue with others
+      }
+
+      if (chunkMatches && chunkMatches.length > 0) {
+        allExactMatches.push(...chunkMatches);
+      }
+    }
+
+    const exactMatches = allExactMatches;
+    console.log(`✅ Found ${exactMatches.length} cached classifications across all chunks`);
 
     // Store exact matches
     if (exactMatches && exactMatches.length > 0) {

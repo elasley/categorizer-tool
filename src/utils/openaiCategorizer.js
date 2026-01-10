@@ -7,10 +7,10 @@ import {
 } from "./classificationCache.js";
 
 // Professional-grade batch configuration for optimal API performance
-const BATCH_SIZE = Number(process.env.REACT_APP_BATCH_SIZE) || 20; // Optimal: 20 products per API call
+const BATCH_SIZE = Number(process.env.REACT_APP_BATCH_SIZE) || 30; // ✅ OPTIMIZED: 30 products per batch (prevents timeouts)
 const MAX_RETRIES = 4;
 const RETRY_DELAY_MS = 2000;
-const API_TIMEOUT_MS = 30000;
+const API_TIMEOUT_MS = 90000; // ✅ 90 seconds timeout (increased from 30s)
 const PREFILTER_CONFIDENCE_THRESHOLD =
   Number(process.env.REACT_APP_PREFILTER_CONFIDENCE) || 95;
 const OPENAI_MODEL = process.env.REACT_APP_OPENAI_MODEL || "gpt-4o-mini";
@@ -781,8 +781,19 @@ export const batchCategorizeWithOpenAI = async (
 
   // 1) Check cache first
   console.info("🔍 Checking cache for existing classifications...");
+  
+  // ✅ Report progress: Cache lookup starting
+  if (progressCallback) {
+    progressCallback(0, products.length, 0, 1, "Checking database cache...");
+  }
+  
   const cacheMap = await batchGetCachedClassifications(products);
   console.info(`✅ Found ${cacheMap.size} cached classifications`);
+  
+  // ✅ Report progress: Cache lookup complete
+  if (progressCallback) {
+    progressCallback(cacheMap.size, products.length, 1, 1, `Found ${cacheMap.size} cached products`);
+  }
 
   // 2) Split into cached and needs-classification
   const cached = [];
@@ -946,32 +957,69 @@ export const batchCategorizeWithOpenAI = async (
         Math.max(1, Math.ceil(proportion * totalBatches)),
         totalBatches
       );
-      progressCallback(
+      // ✅ CRITICAL FIX: Await the progress callback to allow UI updates
+      await progressCallback(
         processedProducts,
         products.length,
         currentBatchFromProgress,
         totalBatches
       );
     }
+    
+    // ✅ ADDITIONAL FIX: Yield to browser after each concurrency group
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
   stats.timeMs = Date.now() - stats.startMs;
   console.info(`OpenAI categorization finished. stats=`, stats);
 
-  // Save new classifications to cache (async, don't wait)
-  const newClassifications = final.filter((p, idx) => {
-    // Only cache if it came from AI (not from cache)
-    const wasCached = cached.some((c) => c.index === idx);
-    return !wasCached && p.suggestedCategory && p.confidence >= 60;
-  });
-
-  if (newClassifications.length > 0) {
-    console.info(
-      `💾 Saving ${newClassifications.length} new classifications to cache...`
-    );
-    batchSaveClassificationsToCache(newClassifications).catch((err) => {
-      console.error("Failed to cache classifications:", err);
-    });
+  // ✅ CRITICAL FIX: Ensure ALL products have categories using local categorizer as fallback
+  console.log('\n🔍 Checking for uncategorized products...');
+  let uncategorizedCount = 0;
+  
+  for (let i = 0; i < final.length; i++) {
+    const product = final[i];
+    
+    // If product has no category OR empty category, use local categorizer
+    if (!product.suggestedCategory || product.suggestedCategory === "") {
+      uncategorizedCount++;
+      console.log(`⚠️ Product ${i + 1} "${product.name || 'Unknown'}" has no category, using local categorizer...`);
+      
+      // Use local categorizer as fallback
+      const localResult = suggestCategory(
+        product.name || "",
+        product.description || "",
+        product.brand || "",
+        product.title || "",
+        product.originalCategory || "",
+        activeCategories
+      );
+      
+      final[i].suggestedCategory = localResult?.category || "Tools & Equipment";
+      final[i].suggestedSubcategory = localResult?.subcategory || "General Tools";
+      final[i].suggestedPartType = localResult?.partType || "Tool";
+      final[i].confidence = Math.max(40, localResult?.confidence - 10 || 40);
+      final[i].validationReason = "Local categorizer fallback (OpenAI returned empty)";
+      
+      console.log(`✅ Assigned fallback: ${final[i].suggestedCategory} -> ${final[i].suggestedSubcategory} (confidence: ${final[i].confidence})`);
+    }
   }
+  
+  if (uncategorizedCount > 0) {
+    console.warn(`⚠️ Applied local categorizer fallback to ${uncategorizedCount} products`);
+  } else {
+    console.log('✅ All products have categories assigned!');
+  }
+
+  // ✅ DISABLED: Don't save to database cache (as per user request)
+  // const newClassifications = final.filter((p, idx) => {
+  //   const wasCached = cached.some((c) => c.index === idx);
+  //   return !wasCached && p.suggestedCategory && p.confidence >= 60;
+  // });
+  // if (newClassifications.length > 0) {
+  //   batchSaveClassificationsToCache(newClassifications).catch((err) => {
+  //     console.error("Failed to cache classifications:", err);
+  //   });
+  // }
 
   return { results: final, stats };
 };
@@ -1029,18 +1077,36 @@ const processBatchWithRetry = async (
   console.error(
     `Batch ${
       batchIndex + 1
-    } failed after ${MAX_RETRIES} attempts, using fallback`
+    } failed after ${MAX_RETRIES} attempts, using local categorizer fallback`
   );
-  return batch.map((product) => ({
-    ...product,
-    suggestedCategory: "",
-    suggestedSubcategory: "",
-    suggestedPartType: "",
-    confidence: 0,
-    error: `Failed after ${MAX_RETRIES} attempts: ${
-      lastError?.message || "Unknown error"
-    }`,
-  }));
+  
+  // ✅ USE LOCAL CATEGORIZER as fallback instead of returning empty
+  console.log(`\n⚠️ BATCH ${batchIndex + 1} FAILED - Applying local categorizer to ${batch.length} products`);
+  
+  return batch.map((product) => {
+    console.log(`🔄 Local fallback for: ${product.name || 'Unknown product'}`);
+    const localResult = suggestCategory(
+      product.name || "",
+      product.description || "",
+      product.brand || "",
+      product.title || "",
+      product.originalCategory || "",
+      categories
+    );
+    
+    const result = {
+      ...product,
+      suggestedCategory: localResult?.category || "Tools & Equipment",
+      suggestedSubcategory: localResult?.subcategory || "General Tools",
+      suggestedPartType: localResult?.partType || "Tool",
+      confidence: Math.max(35, localResult?.confidence - 15 || 35),
+      validationReason: `Local fallback (API failed after ${MAX_RETRIES} attempts)`,
+      error: `API error: ${lastError?.message || "Unknown error"}`,
+    };
+    
+    console.log(`✅ Assigned: ${result.suggestedCategory} -> ${result.suggestedSubcategory} (confidence: ${result.confidence})`);
+    return result;
+  });
 };
 
 const processSingleBatch = async (
@@ -1354,15 +1420,29 @@ Provide professional-grade classifications with JSON array only:`;
 
   if (!resultsRaw || !Array.isArray(resultsRaw)) {
     console.error("Failed to parse OpenAI response or not an array:", content);
-    // Best-effort fallback: return items with no suggestion but keep product data
-    return batch.map((product) => ({
-      ...product,
-      suggestedCategory: "",
-      suggestedSubcategory: "",
-      suggestedPartType: "",
-      confidence: 0,
-      error: "Invalid or unparsable response from AI",
-    }));
+    console.warn(`⚠️ OpenAI returned invalid response, using local categorizer for ${batch.length} products`);
+    
+    // ✅ Use local categorizer instead of returning empty
+    return batch.map((product) => {
+      const localResult = suggestCategory(
+        product.name || "",
+        product.description || "",
+        product.brand || "",
+        product.title || "",
+        product.originalCategory || "",
+        categories
+      );
+      
+      return {
+        ...product,
+        suggestedCategory: localResult?.category || "Tools & Equipment",
+        suggestedSubcategory: localResult?.subcategory || "General Tools",
+        suggestedPartType: localResult?.partType || "Tool",
+        confidence: Math.max(35, localResult?.confidence - 15 || 35),
+        validationReason: "Local fallback (OpenAI response unparsable)",
+        error: "Invalid or unparsable response from AI",
+      };
+    });
   }
 
   // DEBUG: Log parsed AI results

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from "react";
+import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -43,6 +43,14 @@ import {
   generateProductEmbeddings,
 } from "../utils/embeddingGenerator";
 import { batchCategorizeWithOpenAI } from "../utils/openaiCategorizer";
+import {
+  saveAllProductsToDB,
+  getAllProductsFromDB,
+  getMetaFromDB,
+  loadPageFromDB,
+  clearDB,
+  getDBSize
+} from "../utils/indexedDBStorage";
 import toast from "react-hot-toast";
 import {
   setCategories as setReduxCategories,
@@ -177,8 +185,95 @@ const AcesPiesCategorizationTool = () => {
   const [showBulkAssignmentTool, setShowBulkAssignmentTool] = useState(false);
 
   const [confidenceThreshold, setConfidenceThreshold] = useState(70);
-
+  const [processingProgress, setProcessingProgress] = useState({
+    current: 0,
+    total: 0,
+    processed: 0,
+    totalProducts: 0,
+  });
+  const lastProgressUpdateRef = useRef(0);
+  
+  // ✅ VIRTUAL PAGINATION: Store all products in IndexedDB, only current page in Redux/State
+  const [isLoadingPage, setIsLoadingPage] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [filteredCount, setFilteredCount] = useState(0);
   const itemsPerPage = 50;
+  
+  // ✅ DEBUG: Monitor IndexedDB changes
+  useEffect(() => {
+    const checkStorage = async () => {
+      const size = await getDBSize();
+      if (size) {
+        console.log(`🔍 IndexedDB Storage: ${size.usageMB}MB / ${size.quotaMB}MB (${size.percentUsed}% used)`);
+      }
+    };
+    
+    // Check every 10 seconds
+    const interval = setInterval(checkStorage, 10000);
+    
+    // Check on window focus (detect if user switches tabs)
+    window.addEventListener('focus', checkStorage);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', checkStorage);
+    };
+  }, []);
+  
+  // ✅ Load total count from IndexedDB
+  useEffect(() => {
+    const loadMeta = async () => {
+      const meta = await getMetaFromDB();
+      setTotalCount(meta.total || products.length);
+    };
+    loadMeta();
+  }, [products.length]);
+  
+  // ✅ Load current page when page number changes
+  useEffect(() => {
+    // Don't load from storage while processing is active
+    if (isProcessing) {
+      console.log('⏸️ Skipping page load - processing in progress');
+      return;
+    }
+    
+    const loadPage = async () => {
+      const meta = await getMetaFromDB();
+      console.log(`🔄 useEffect triggered: currentPage=${currentPage}, meta.total=${meta.total}, isProcessing=${isProcessing}`);
+      
+      if (meta.total > 0) {
+        console.log(`📄 Loading page ${currentPage} from IndexedDB...`);
+        setIsLoadingPage(true);
+        
+        // Load page data from IndexedDB
+        const pageData = await loadPageFromDB(currentPage, itemsPerPage);
+        if (pageData && pageData.length > 0) {
+          console.log(`✅ Dispatching ${pageData.length} products to Redux for page ${currentPage}`);
+          dispatch(setReduxProducts(pageData));
+        } else {
+          console.error(`❌ No products loaded from IndexedDB for page ${currentPage}`);
+        }
+        setIsLoadingPage(false);
+      } else {
+        console.log('ℹ️ No IndexedDB data - products are already in Redux');
+      }
+    };
+    
+    loadPage();
+  }, [currentPage, dispatch, isProcessing, itemsPerPage]);
+  
+  // ✅ Initialize from IndexedDB on mount
+  useEffect(() => {
+    const initFromStorage = async () => {
+      const meta = await getMetaFromDB();
+      if (meta.total > 0 && products.length === 0) {
+        console.log(`🔄 Found ${meta.total} products in IndexedDB, loading page 1...`);
+        const pageData = await loadPageFromDB(1, itemsPerPage);
+        dispatch(setReduxProducts(pageData));
+      }
+    };
+    initFromStorage();
+  }, [dispatch, products.length, itemsPerPage]);
 
   // Save categories to Supabase with relational structure and NLP embeddings
   const saveCategoriesWithEmbeddings = async (categoriesData) => {
@@ -1034,50 +1129,76 @@ const AcesPiesCategorizationTool = () => {
 
   // Assign categories using edge function (professional vector-based approach)
   const assignCategoriesViaEdgeFunction = async () => {
-    if (!products || products.length === 0) {
+    // ✅ CRITICAL FIX: Get ALL products from IndexedDB, not just Redux
+    const allProductsFromStorage = await getAllProductsFromDB();
+    const productsToProcess = allProductsFromStorage.length > 0 ? allProductsFromStorage : products;
+    
+    if (!productsToProcess || productsToProcess.length === 0) {
       toast.error("No products to categorize");
       return;
     }
 
     const BATCH_SIZE = 500; // Match edge function limit
-    const totalProducts = products.length;
+    const totalProducts = productsToProcess.length;
 
-    // SILENT BACKGROUND PROCESSING - No toast notifications
+    console.log("\n🚀 Vector Similarity Categorization Starting...");
+    console.log(`📦 Products in Redux: ${products.length}`);
+    console.log(`📦 Products in Storage: ${allProductsFromStorage.length}`);
+    console.log(`✅ Processing ALL ${productsToProcess.length} products`);
+
     setIsProcessing(true);
     setCategorizationMethod("vector");
-
-    console.log("\n🔄 Preparing products for vector categorization...");
-    console.log(`📦 Total products: ${totalProducts}`);
+    
+    // Reset progress with status message
+    setProcessingProgress({
+      current: 0,
+      total: Math.ceil(productsToProcess.length / BATCH_SIZE),
+      processed: 0,
+      totalProducts: productsToProcess.length,
+      statusMessage: "Generating embeddings..."
+    });
 
     // Small delay to ensure UI updates render
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     let productsToSend;
     try {
-      const productsForEmbedding = products.map((p, index) => ({
+      const productsForEmbedding = productsToProcess.map((p, index) => ({
         id: p.id || `product-${index}`,
         name: p.name || p.productName || "",
         description: p.description || "",
       }));
 
-      // Generate embeddings silently (progress logged to console only)
+      // Generate embeddings with progress updates
       productsToSend = await generateProductEmbeddings(
         productsForEmbedding,
         (current, total) => {
-          // Log progress to console only, no toast updates
+          // Update progress state
           if (current % 10 === 0 || current === total) {
             console.log(`🔧 Generated embeddings: ${current}/${total}`);
+            setProcessingProgress({
+              current: Math.floor((current / total) * 100),
+              total: 100,
+              processed: current,
+              totalProducts: total,
+              statusMessage: `Generating embeddings: ${current}/${total}`
+            });
           }
         }
       );
 
-      if (productsToSend.length === 0) {
-        throw new Error("Failed to generate embeddings for products");
-      }
-
       console.log(
         `✅ Generated embeddings for ${productsToSend.length}/${totalProducts} products`
       );
+      
+      // Update progress
+      setProcessingProgress({
+        current: 0,
+        total: Math.ceil(totalProducts / BATCH_SIZE),
+        processed: 0,
+        totalProducts: totalProducts,
+        statusMessage: "Categorizing with AI..."
+      });
     } catch (embeddingError) {
       console.error("❌ Embedding generation failed:", embeddingError);
 
@@ -1113,20 +1234,26 @@ const AcesPiesCategorizationTool = () => {
     try {
       let allCategorizedProducts = [];
 
-      // Process in batches if needed - all logging to console only
+      // Process in batches if needed
       for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
         const start = batchIndex * BATCH_SIZE;
         const end = Math.min(start + BATCH_SIZE, totalProducts);
         const batch = productsToSend.slice(start, end);
 
-        if (needsBatching) {
-          console.log(
-            `\n🔄 Batch ${
-              batchIndex + 1
-            }/${totalBatches}: Processing products ${start + 1}-${end}`
-          );
-          // No toast updates - silent background processing
-        }
+        console.log(
+          `\n🔄 Batch ${
+            batchIndex + 1
+          }/${totalBatches}: Processing products ${start + 1}-${end}`
+        );
+        
+        // Update progress
+        setProcessingProgress({
+          current: batchIndex + 1,
+          total: totalBatches,
+          processed: end,
+          totalProducts: totalProducts,
+          statusMessage: `Processing batch ${batchIndex + 1}/${totalBatches}...`
+        });
 
         const startTime = Date.now();
 
@@ -1191,10 +1318,10 @@ const AcesPiesCategorizationTool = () => {
         }
 
         // Update products with assigned categories
-        const updatedProducts = products.map((product) => {
+        const updatedProducts = productsToProcess.map((product) => {
           const assigned = categorized.find(
             (p) =>
-              p.id === (product.id || `product-${products.indexOf(product)}`)
+              p.id === (product.id || `product-${productsToProcess.indexOf(product)}`)
           );
           if (assigned) {
             return {
@@ -1216,13 +1343,55 @@ const AcesPiesCategorizationTool = () => {
           `✅ Updated ${updatedProducts.length} products with categories\n`
         );
 
-        dispatch(setReduxProducts(updatedProducts));
-        dispatch(setReduxProductsReadyForUpload(true));
+        // ✅ VIRTUAL PAGINATION: Update IndexedDB with categorized products
+        console.log(`\n🔄 Updating virtual pagination with categorized products...`);
+        console.log(`📊 Total categorized products: ${updatedProducts.length}`);
+        
+        // Clear existing storage
+        await clearDB();
+        
+        const storageSaved = await saveAllProductsToDB(updatedProducts);
+        
+        if (!storageSaved) {
+          console.error('❌ IndexedDB save failed! Loading all to Redux (may freeze)');
+          dispatch(setReduxProducts(updatedProducts));
+          dispatch(setReduxProductsReadyForUpload(true));
+          setTotalCount(updatedProducts.length);
+        } else {
+          console.log(`✅ IndexedDB updated successfully!`);
+          
+          // ✅ Update totalCount state for pagination
+          setTotalCount(updatedProducts.length);
+          
+          // ✅ Load ONLY first 50 products into Redux
+          const firstPage = updatedProducts.slice(0, itemsPerPage);
+          console.log(`📄 Loading page 1: ${firstPage.length} products (out of ${updatedProducts.length} total)`);
+          
+          dispatch(setReduxProducts(firstPage));
+          dispatch(setReduxProductsReadyForUpload(true));
+          
+          // Small delay to ensure Redux update completes
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+          // Now safe to set page to 1
+          setCurrentPage(1);
+          
+          const totalPages = Math.ceil(updatedProducts.length / itemsPerPage);
+          console.log(`\n✅ VIRTUAL PAGINATION COMPLETE:`);
+          console.log(`   📦 Total in IndexedDB: ${updatedProducts.length}`);
+          console.log(`   📄 Loaded to Redux (page 1): ${firstPage.length}`);
+          console.log(`   📊 Total pages available: ${totalPages}`);
+        }
 
         const highConf = updatedProducts.filter(
           (p) => (p.confidence || 0) >= 70
         ).length;
-        toast.success(` Categories Assigned Successfully!`, { duration: 5000 });
+        
+        const totalPages = Math.ceil(updatedProducts.length / itemsPerPage);
+        toast.success(
+          `✅ ${updatedProducts.length} Products Categorized! Page 1/${totalPages} • Click Next to view more`,
+          { duration: 6000 }
+        );
       } else {
         throw new Error("No categorized products returned from edge function");
       }
@@ -1234,6 +1403,13 @@ const AcesPiesCategorizationTool = () => {
     } finally {
       setIsProcessing(false);
       setCategorizationMethod(null);
+      // Reset progress state
+      setProcessingProgress({
+        current: 0,
+        total: 0,
+        processed: 0,
+        totalProducts: 0,
+      });
     }
   };
 
@@ -1452,7 +1628,30 @@ const AcesPiesCategorizationTool = () => {
         return;
       }
 
-      dispatch(setReduxProducts(parsedData));
+      // ✅ VIRTUAL PAGINATION: Save ALL products to IndexedDB immediately on upload
+      console.log(`💾 Uploading ${parsedData.length} products with virtual pagination...`);
+      
+      // Clear old storage
+      await clearDB();
+      
+      // Save all products to IndexedDB
+      const storageSaved = await saveAllProductsToDB(parsedData);
+      
+      if (storageSaved) {
+        // Update totalCount state for pagination
+        setTotalCount(parsedData.length);
+        
+        // Load only first 50 into Redux
+        const firstPage = parsedData.slice(0, itemsPerPage);
+        console.log(`✅ Loaded first ${firstPage.length} products to Redux (out of ${parsedData.length} total)`);
+        dispatch(setReduxProducts(firstPage));
+      } else {
+        // Fallback: Load all to Redux if storage fails
+        console.warn('⚠️ IndexedDB failed, loading all products to Redux');
+        dispatch(setReduxProducts(parsedData));
+        setTotalCount(parsedData.length);
+      }
+      
       dispatch(setReduxValidationResults(validation));
       dispatch(setProductsFileInfo({ name: filename, type: "text/csv" }));
       dispatch(setReduxProductsReadyForUpload(false)); // Will be set to true after categorization
@@ -1497,12 +1696,7 @@ const AcesPiesCategorizationTool = () => {
       return;
     }
 
-    console.log("\n═══════════════════════════════════════════════════");
-    console.log("🤖 PRODUCT CATEGORIZATION - VECTOR-BASED");
-    console.log("═══════════════════════════════════════════════════");
-    console.log("📊 Products to categorize:", products.length);
-    console.log("🎯 Using: Vector Similarity Search (Edge Function)");
-    console.log("═══════════════════════════════════════════════════\n");
+   
 
     // Always use edge function for vector-based categorization
     return assignCategoriesViaEdgeFunction();
@@ -1510,41 +1704,145 @@ const AcesPiesCategorizationTool = () => {
 
   // OpenAI Auto-Suggest Handler
   const handleOpenAISuggest = async () => {
-    if (products.length === 0) {
+    // ✅ CRITICAL FIX: Get ALL products from IndexedDB, not just Redux
+    const allProductsFromStorage = await getAllProductsFromDB();
+    const productsToProcess = allProductsFromStorage.length > 0 ? allProductsFromStorage : products;
+    
+    if (productsToProcess.length === 0) {
       toast.error("Please upload products first");
       return;
     }
+    
+    // ✅ VALIDATION: Check if products have required fields
+    const invalidProducts = productsToProcess.filter(p => !p.name && !p.description && !p.title);
+    if (invalidProducts.length > 0) {
+      console.warn(`⚠️ Found ${invalidProducts.length} products without name, title, or description`);
+      console.warn('Sample invalid products:', invalidProducts.slice(0, 3).map(p => ({ id: p.id, name: p.name, description: p.description, title: p.title })));
+    }
 
-    console.log("\n═══════════════════════════════════════════════════");
-    console.log("🤖 OPENAI AUTO-SUGGEST CATEGORIZATION");
-    console.log("═══════════════════════════════════════════════════");
-    console.log("📊 Products to categorize:", products.length);
-    console.log("🎯 Using: OpenAI GPT Model");
-    console.log("═══════════════════════════════════════════════════\n");
+    console.log(`\n🚀 OpenAI Auto-Suggest Starting...`);
+    console.log(`📦 Products in Redux: ${products.length}`);
+    console.log(`📦 Products in Storage: ${allProductsFromStorage.length}`);
+    console.log(`✅ Processing ALL ${productsToProcess.length} products`);
+    console.log(`⚠️ Invalid products (no name/title/desc): ${invalidProducts.length}`);
 
     setIsProcessing(true);
     setCategorizationMethod("openai");
+    
+    // Reset progress to initial state
+    setProcessingProgress({
+      current: 0,
+      total: Math.ceil(productsToProcess.length / 30), // ✅ UPDATED: 30 products per batch
+      processed: 0,
+      totalProducts: productsToProcess.length,
+    });
+    
     try {
-      // Use the current active categories (ACES or custom)
-      const categoriesToUse =
-        activeCategories === "user" && userCategories
-          ? userCategories
-          : acesCategories;
+      // ✅ SMART CATEGORY SELECTION: Database first, then fallback to ACES
+      let categoriesToUse = acesCategories; // Default fallback
+      let categorySource = "ACES (default)";
+      
+      try {
+        console.log("🔄 Fetching latest categories from Supabase...");
+        const { fetchDatabaseCategories } = await import("../utils/classificationCache.js");
+        const dbCategories = await fetchDatabaseCategories();
+        
+        if (dbCategories && Object.keys(dbCategories).length > 0) {
+          categoriesToUse = dbCategories;
+          categorySource = "Supabase Database (uploaded)";
+          console.log(`✅ Using ${Object.keys(dbCategories).length} categories from Supabase database`);
+          console.log("Sample categories:", Object.keys(dbCategories).slice(0, 5));
+        } else {
+          console.log("⚠️ No categories in database, using ACES default");
+          categorySource = "ACES (no custom categories found)";
+        }
+      } catch (dbError) {
+        console.warn("❌ Failed to fetch database categories:", dbError.message);
+        // Fallback to local state if available
+        if (activeCategories === "user" && userCategories) {
+          categoriesToUse = userCategories;
+          categorySource = "Local State (user categories)";
+          console.log("✅ Using user categories from local state");
+        } else {
+          console.log("✅ Using ACES default categories");
+          categorySource = "ACES (database fetch failed)";
+        }
+      }
 
-      console.log(
-        `Using ${
-          activeCategories === "user" ? "Custom" : "ACES"
-        } categories for OpenAI`
-      );
+      console.log(`\n📋 ========================================`);
+      console.log(`📋 CATEGORY SOURCE: ${categorySource}`);
+      console.log(`📋 Total categories available: ${Object.keys(categoriesToUse).length}`);
+      console.log(`📋 Categories: ${Object.keys(categoriesToUse).join(", ")}`);
+      console.log(`📋 ========================================\n`);
 
-      // Call OpenAI batch categorization (no progress toasts)
-      const { results } = await batchCategorizeWithOpenAI(
-        products,
-        undefined,
+      // ✅ Progress callback with UI updates and non-blocking behavior
+      const progressCallback = (processed, total, batch, batches, statusMessage = "") => {
+        // 🚀 OPTIMIZED THROTTLING: Only update progress bar, no table rendering
+        const throttleInterval = 200; // Update every 200ms for smooth progress
+        
+        // Throttle updates to prevent excessive re-renders
+        const now = Date.now();
+        if (now - lastProgressUpdateRef.current < throttleInterval && processed < total) {
+          return; // Skip this update
+        }
+        lastProgressUpdateRef.current = now;
+        
+        // Update progress state to trigger React re-render (progress bar only)
+        setProcessingProgress({
+          current: batch,
+          total: batches,
+          processed,
+          totalProducts: total,
+          statusMessage: statusMessage || `Processing batch ${batch}/${batches}...`
+        });
+      };
+
+      // ✅ FIX: Don't update Redux during processing - prevents UI freeze
+      // Only update progress bar, not product data
+      
+      // Call OpenAI batch categorization with ALL products from storage
+      console.log(`\n🚀 Starting OpenAI categorization for ${productsToProcess.length} products...`);
+      const batchResult = await batchCategorizeWithOpenAI(
+        productsToProcess,  // ✅ Use ALL products, not just Redux
+        progressCallback,
         categoriesToUse
       );
 
-      // Update products with AI suggestions
+      console.log(`\n✅ OpenAI categorization COMPLETE!`);
+      console.log(`📊 Batch result structure:`, {
+        hasResults: !!batchResult?.results,
+        resultsLength: batchResult?.results?.length || 0,
+        hasStats: !!batchResult?.stats,
+        statsKeys: batchResult?.stats ? Object.keys(batchResult.stats) : []
+      });
+      
+      const results = batchResult?.results || batchResult || [];
+      console.log(`📊 Results received: ${results.length} products`);
+      
+      // ✅ CRITICAL: Verify results have categorization data
+      if (!results || results.length === 0) {
+        console.error('❌ No results returned from OpenAI categorization');
+        console.error('Batch result:', batchResult);
+        throw new Error('No results returned from OpenAI categorization');
+      }
+      
+      if (results.length !== productsToProcess.length) {
+        console.warn(`⚠️ Result count mismatch: expected ${productsToProcess.length}, got ${results.length}`);
+      }
+      
+      // ✅ DEBUG: Log sample BEFORE mapping
+      console.log(`\n🔍 Sample results BEFORE mapping (first 2):`);
+      results.slice(0, 2).forEach((r, idx) => {
+        console.log(`Result ${idx + 1}:`, {
+          name: r.name,
+          suggestedCategory: r.suggestedCategory,
+          suggestedSubcategory: r.suggestedSubcategory,
+          suggestedPartType: r.suggestedPartType,
+          confidence: r.confidence
+        });
+      });
+
+      // ✅ OPTIMIZED: Map results efficiently without creating intermediate arrays
       const updatedProducts = results.map((result) => ({
         ...result,
         suggestedCategory: result.suggestedCategory || "",
@@ -1559,10 +1857,119 @@ const AcesPiesCategorizationTool = () => {
             : "low-confidence",
       }));
 
-      dispatch(setReduxProducts(updatedProducts));
-      dispatch(setReduxProductsReadyForUpload(true));
+      // ✅ DEBUG: Log sample results AFTER mapping
+      console.log(`\n✅ Total categorized products: ${updatedProducts.length}`);
+      console.log(`📊 Sample categorized products AFTER mapping (first 5):`);
+      updatedProducts.slice(0, 5).forEach((p, idx) => {
+        console.log(`Product ${idx + 1}:`, {
+          name: p.name,
+          category: p.suggestedCategory,
+          subcategory: p.suggestedSubcategory,
+          partType: p.suggestedPartType,
+          confidence: p.confidence,
+          status: p.status
+        });
+      });
+      
+      console.log(`\n📊 Last 3 products after mapping:`);
+      updatedProducts.slice(-3).forEach((p, idx) => {
+        console.log(`Product ${updatedProducts.length - 3 + idx + 1}:`, {
+          name: p.name,
+          category: p.suggestedCategory,
+          subcategory: p.suggestedSubcategory,
+          partType: p.suggestedPartType,
+          confidence: p.confidence
+        });
+      });
 
-      toast.success(" Categories Assigned Successfully!", { duration: 5000 });
+      // ✅ VALIDATION: Ensure products actually have categories before saving
+      const categorizedCount = updatedProducts.filter(p => p.suggestedCategory && p.suggestedSubcategory).length;
+      const uncategorizedCount = updatedProducts.length - categorizedCount;
+      
+      console.log(`\n📊 CATEGORIZATION SUMMARY:`);
+      console.log(`   ✅ Categorized: ${categorizedCount}/${updatedProducts.length}`);
+      console.log(`   ❌ Uncategorized: ${uncategorizedCount}/${updatedProducts.length}`);
+      console.log(`   📈 Success rate: ${((categorizedCount / updatedProducts.length) * 100).toFixed(1)}%`);
+      
+      if (categorizedCount === 0) {
+        throw new Error('OpenAI categorization failed - no products were categorized');
+      }
+      
+      if (uncategorizedCount > 0) {
+        console.warn(`⚠️ Warning: ${uncategorizedCount} products were not categorized`);
+      }
+
+      // ✅ VIRTUAL PAGINATION: Update IndexedDB with categorized products
+      console.log(`\n🔄 Updating virtual pagination with categorized products...`);
+      console.log(`📊 Total categorized products: ${updatedProducts.length}`);
+      
+      // ✅ DEBUG: Check storage size BEFORE clearing
+      const beforeSize = await getDBSize();
+      console.log(`🔍 IndexedDB BEFORE clear: ${beforeSize ? `${beforeSize.usageMB}MB` : 'N/A'}`);
+      
+      // Clear existing storage
+      await clearDB();
+      console.log(`🔍 IndexedDB cleared ✅`);
+      
+      const storageSaved = await saveAllProductsToDB(updatedProducts);
+      
+      // ✅ DEBUG: Verify storage saved
+      const afterSize = await getDBSize();
+      console.log(`🔍 IndexedDB AFTER save: ${afterSize ? `${afterSize.usageMB}MB` : 'FAILED TO SAVE!'}`);
+      
+      if (!storageSaved) {
+        console.error('❌ IndexedDB save failed! Loading all to Redux (may freeze)');
+        dispatch(setReduxProducts(updatedProducts));
+        dispatch(setReduxProductsReadyForUpload(true));
+        setTotalCount(updatedProducts.length);
+        toast.success(`✅ ${updatedProducts.length} Products Categorized!`, { duration: 5000 });
+      } else {
+        console.log(`✅ IndexedDB updated successfully!`);
+        
+        // ✅ Update totalCount state for pagination
+        setTotalCount(updatedProducts.length);
+        
+        // ✅ CRITICAL FIX: Use requestAnimationFrame to ensure storage is ready before Redux update
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        
+        // ✅ Load ONLY first 50 products into Redux
+        const firstPage = updatedProducts.slice(0, itemsPerPage);
+        console.log(`📄 Loading page 1: ${firstPage.length} products (out of ${updatedProducts.length} total)`);
+        
+        // ✅ VERIFY: Check what we're loading to Redux
+        console.log(`\n🔍 VERIFICATION: First page products (first 3):`);
+        firstPage.slice(0, 3).forEach((p, idx) => {
+          console.log(`Page 1 Product ${idx + 1}:`, {
+            name: p.name,
+            category: p.suggestedCategory,
+            subcategory: p.suggestedSubcategory,
+            partType: p.suggestedPartType,
+            confidence: p.confidence
+          });
+        });
+        
+        // ✅ CRITICAL: Dispatch Redux FIRST, then set page (prevents useEffect race condition)
+        dispatch(setReduxProducts(firstPage));
+        dispatch(setReduxProductsReadyForUpload(true));
+        
+        // Small delay to ensure Redux update completes
+        await new Promise(resolve => setTimeout(resolve, 50));
+        
+        // Now safe to set page to 1
+        setCurrentPage(1);
+        
+        const totalPages = Math.ceil(updatedProducts.length / itemsPerPage);
+        console.log(`\n✅ VIRTUAL PAGINATION COMPLETE:`);
+        console.log(`   📦 Total in IndexedDB: ${updatedProducts.length}`);
+        console.log(`   📄 Loaded to Redux (page 1): ${firstPage.length}`);
+        console.log(`   📊 Total pages available: ${totalPages}`);
+        console.log(`   ⚡ React will render ONLY ${firstPage.length} rows!`);
+        
+        toast.success(
+          `✅ ${updatedProducts.length} Products Categorized! Page 1/${totalPages} • Click Next to view more`,
+          { duration: 6000 }
+        );
+      }
     } catch (error) {
       console.error("❌ OpenAI categorization error:", error);
       toast.error(`❌ OpenAI categorization failed: ${error.message}`);
@@ -1570,6 +1977,13 @@ const AcesPiesCategorizationTool = () => {
     } finally {
       setIsProcessing(false);
       setCategorizationMethod(null);
+      // Reset progress state
+      setProcessingProgress({
+        current: 0,
+        total: 0,
+        processed: 0,
+        totalProducts: 0,
+      });
     }
   };
 
@@ -1662,70 +2076,151 @@ const AcesPiesCategorizationTool = () => {
     setShowBulkAssignmentTool(true);
   };
 
-  const handleExport = () => {
-    if (products.length === 0) {
+  const handleExport = async () => {
+    // ✅ CRITICAL FIX: Export ALL products from IndexedDB, not just Redux
+    const allProducts = await getAllProductsFromDB();
+    const productsToExport = allProducts.length > 0 ? allProducts : products;
+    
+    if (productsToExport.length === 0) {
       alert("No products to export");
       return;
     }
 
+    console.log(`📥 Exporting ${productsToExport.length} products (${allProducts.length} from IndexedDB + ${products.length} from Redux)`);
+    
     const timestamp = new Date().toISOString().split("T")[0];
     const filename = `aces-categorized-${timestamp}.csv`;
 
-    exportToCSV(products, filename);
+    exportToCSV(productsToExport, filename);
+    
+    // ✅ Check if all products are categorized and clear IndexedDB if done
+    const categorized = productsToExport.filter(p => p.suggestedCategory && p.suggestedSubcategory).length;
+    console.log(`📊 Export Stats: ${categorized}/${productsToExport.length} products categorized`);
+    
+    if (categorized === productsToExport.length) {
+      console.log('✅ All products categorized! Clearing IndexedDB...');
+      await clearDB();
+      setTotalCount(0);
+      toast.success(`✅ Exported ${productsToExport.length} fully categorized products! IndexedDB cleared.`, { duration: 5000 });
+    } else {
+      toast.success(`✅ Exported ${productsToExport.length} products`, { duration: 3000 });
+    }
   };
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
-      const searchMatch =
-        searchTerm === "" ||
-        Object.values(product).some((value) =>
-          String(value).toLowerCase().includes(searchTerm.toLowerCase())
-        );
-
-      const categoryMatch =
-        selectedCategory === "" ||
-        product.suggestedCategory === selectedCategory;
-
-      return searchMatch && categoryMatch;
+  // ✅ VIRTUAL PAGINATION: Filter from IndexedDB, show current page
+  const displayedProducts = useMemo(() => {
+    console.log('🔍 useMemo recalculating displayedProducts:', {
+      totalCount,
+      reduxProductsLength: products.length,
+      hasFilters: searchTerm !== "" || selectedCategory !== ""
     });
-  }, [products, searchTerm, selectedCategory]);
+    
+    // ✅ NO FILTERS: Always use Redux products directly (already paginated)
+    if (searchTerm === "" && selectedCategory === "") {
+      console.log('✅ No filters - using Redux products directly:', products.length);
+      setFilteredCount(totalCount);
+      return products; // Redux already has ONLY current page
+    }
+    
+    // ✅ WITH FILTERS: Filter current Redux products (already loaded)
+    // Note: For filters, we show results from current page only (good enough for UX)
+    console.log('⚠️ Filters active - filtering current page');
+    
+    const searchLower = searchTerm.toLowerCase();
+    const filtered = products.filter(product => {
+      // Search term filter
+      if (searchTerm !== "") {
+        const matchFound = 
+          (product.name && product.name.toLowerCase().includes(searchLower)) ||
+          (product.description && product.description.toLowerCase().includes(searchLower)) ||
+          (product.suggestedCategory && product.suggestedCategory.toLowerCase().includes(searchLower)) ||
+          (product.brand && product.brand.toLowerCase().includes(searchLower));
+        if (!matchFound) return false;
+      }
 
-  const paginatedProducts = filteredProducts.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+      // Category filter
+      if (selectedCategory !== "" && product.suggestedCategory !== selectedCategory) {
+        return false;
+      }
+
+      return true;
+    });
+    
+    setFilteredCount(filtered.length);
+    console.log(`✅ Filtered: ${filtered.length} products match criteria from current page`);
+    
+    return filtered;
+  }, [products, searchTerm, selectedCategory, totalCount]);
+
+  const totalPages = Math.ceil(
+    (searchTerm || selectedCategory) 
+      ? filteredCount / itemsPerPage 
+      : totalCount / itemsPerPage
   );
+  
+  // 🐛 DEBUG: Log pagination info
+  console.log('📊 Pagination Debug:', {
+    totalCount,
+    filteredCount,
+    displayedProducts: displayedProducts.length,
+    totalPages,
+    currentPage,
+    itemsPerPage,
+    showPagination: totalPages > 1
+  });
 
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
-
+  // ✅ OPTIMIZED: Cache stats to avoid recalculating on every render
   const stats = useMemo(() => {
-    const total = products.length;
-    const categorized = products.filter((p) => p.suggestedCategory).length;
-    const highConfidence = products.filter(
-      (p) => p.confidence > confidenceThreshold
-    ).length;
-    const needsReview = products.filter(
-      (p) => p.confidence < 50 && p.confidence > 0
-    ).length;
-    const problematic = products.filter(
-      (p) =>
-        (p.confidence || 0) < 30 ||
-        !p.suggestedCategory ||
+    console.log('📊 Calculating stats...', { totalCount, reduxLength: products.length });
+    
+    // If we have storage, use current page sample to estimate stats
+    if (totalCount > 0 && products.length > 0) {
+      // Calculate stats from current page (Redux products) and extrapolate
+      const categorized = products.filter((p) => p.suggestedCategory).length;
+      const highConfidence = products.filter((p) => p.confidence > confidenceThreshold).length;
+      const needsReview = products.filter((p) => p.confidence < 50 && p.confidence > 0).length;
+      const problematic = products.filter((p) =>
+        (p.confidence || 0) < 30 || !p.suggestedCategory ||
         (p.suggestedCategory && !p.suggestedSubcategory)
-    ).length;
-    const avgConfidence =
-      total > 0
-        ? products.reduce((sum, p) => sum + (p.confidence || 0), 0) / total
+      ).length;
+      const avgConfidence = products.length > 0
+        ? products.reduce((sum, p) => sum + (p.confidence || 0), 0) / products.length
         : 0;
-
-    return {
-      total,
-      categorized,
-      highConfidence,
-      needsReview,
-      problematic,
-      avgConfidence: avgConfidence.toFixed(1),
-    };
-  }, [products, confidenceThreshold]);
+      
+      // Extrapolate to total
+      const ratio = totalCount / products.length;
+      
+      console.log('📊 Stats (extrapolated from page):', {
+        total: totalCount,
+        categorized: Math.round(categorized * ratio),
+        highConfidence: Math.round(highConfidence * ratio),
+        avgConfidence: avgConfidence.toFixed(1)
+      });
+      
+      return { 
+        total: totalCount, 
+        categorized: Math.round(categorized * ratio), 
+        highConfidence: Math.round(highConfidence * ratio), 
+        needsReview: Math.round(needsReview * ratio), 
+        problematic: Math.round(problematic * ratio), 
+        avgConfidence: avgConfidence.toFixed(1) 
+      };
+    }
+    
+    // No storage - use Redux products directly
+    const categorized = products.filter((p) => p.suggestedCategory).length;
+    const highConfidence = products.filter((p) => p.confidence > confidenceThreshold).length;
+    const needsReview = products.filter((p) => p.confidence < 50 && p.confidence > 0).length;
+    const problematic = products.filter((p) =>
+      (p.confidence || 0) < 30 || !p.suggestedCategory ||
+      (p.suggestedCategory && !p.suggestedSubcategory)
+    ).length;
+    const avgConfidence = products.length > 0
+      ? products.reduce((sum, p) => sum + (p.confidence || 0), 0) / products.length
+      : 0;
+      
+    return { total: products.length, categorized, highConfidence, needsReview, problematic, avgConfidence: avgConfidence.toFixed(1) };
+  }, [products, confidenceThreshold, totalCount]);
 
   return (
     <div className="max-w-7xl mx-auto p-6 bg-white min-h-screen">
@@ -1944,6 +2439,15 @@ const AcesPiesCategorizationTool = () => {
 
           {isProcessing && (
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              {products.length > 1000 && (
+                <div className="mb-3 p-2 bg-amber-50 border border-amber-300 rounded flex items-center gap-2 text-sm text-amber-800">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>
+                    Large dataset ({products.length.toLocaleString()} products) - 
+                    Progress updates every 500ms to maintain performance
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between mb-2">
                 <span className="font-medium text-blue-900">
                   {categorizationMethod === "openai"
@@ -1952,21 +2456,39 @@ const AcesPiesCategorizationTool = () => {
                 </span>
                 <span className="text-blue-700 flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  Processing {products.length} products
+                  {processingProgress.processed > 0 ? (
+                    <>
+                      {processingProgress.processed.toLocaleString()}/{processingProgress.totalProducts.toLocaleString()} products
+                      <span className="font-bold ml-1">
+                        ({Math.round((processingProgress.processed / processingProgress.totalProducts) * 100)}%)
+                      </span>
+                    </>
+                  ) : (
+                    <>Processing {products.length.toLocaleString()} products</>
+                  )}
                 </span>
               </div>
               <div className="w-full bg-blue-200 rounded-full h-2">
                 <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300 animate-pulse"
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                   style={{
-                    width: "100%",
+                    width: processingProgress.totalProducts > 0 
+                      ? `${(processingProgress.processed / processingProgress.totalProducts) * 100}%`
+                      : '0%'
                   }}
                 />
               </div>
-              <div className="mt-1 text-xs text-blue-600">
-                {categorizationMethod === "openai"
-                  ? "Using OpenAI GPT for intelligent categorization"
-                  : "Using vector embeddings for semantic matching"}
+              <div className="mt-1 text-xs text-blue-600 flex justify-between">
+                <span>
+                  {categorizationMethod === "openai"
+                    ? "Using OpenAI GPT for intelligent categorization"
+                    : "Using vector embeddings for semantic matching"}
+                </span>
+                {processingProgress.total > 0 && processingProgress.current > 0 && (
+                  <span className="font-medium">
+                    Batch {processingProgress.current}/{processingProgress.total}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -2041,12 +2563,42 @@ const AcesPiesCategorizationTool = () => {
 
               <button
                 onClick={handleExport}
-                disabled={products.length === 0}
+                disabled={products.length === 0 && totalCount === 0}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-50 shadow-sm hover:shadow-md transition-all"
               >
                 <Download className="w-4 h-4" />
-                Export Results
+                Export All Results ({totalCount > 0 ? totalCount : products.length})
               </button>
+              
+              {totalCount > 0 && (
+                <button
+                  onClick={async () => {
+                    const allProducts = await getAllProductsFromDB();
+                    const categorized = allProducts.filter(p => p.suggestedCategory && p.suggestedSubcategory).length;
+                    const uncategorized = allProducts.length - categorized;
+                    
+                    console.log(`\n📊 CATEGORIZATION CHECK:`);
+                    console.log(`   Total: ${allProducts.length}`);
+                    console.log(`   ✅ Categorized: ${categorized}`);
+                    console.log(`   ❌ Uncategorized: ${uncategorized}`);
+                    
+                    if (uncategorized === 0) {
+                      const confirm = window.confirm(`All ${allProducts.length} products are categorized! Clear IndexedDB now?`);
+                      if (confirm) {
+                        await clearDB();
+                        setTotalCount(0);
+                        toast.success('IndexedDB cleared! All products were categorized.', { duration: 5000 });
+                      }
+                    } else {
+                      alert(`⚠️ ${uncategorized} products still need categorization. Click OpenAI Auto-Suggest or Vector Similarity to categorize them.`);
+                    }
+                  }}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm hover:shadow-md transition-all"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  Check & Clear DB
+                </button>
+              )}
 
               <button
                 onClick={() => setShowTaxonomyManager(true)}
@@ -2112,16 +2664,81 @@ const AcesPiesCategorizationTool = () => {
 
             <div className="flex items-center text-sm text-gray-600">
               <Filter className="w-4 h-4 mr-1" />
-              Showing {filteredProducts.length.toLocaleString()} of{" "}
-              {products.length.toLocaleString()} products
+              Showing {displayedProducts.length.toLocaleString()} of{" "}
+              {(searchTerm || selectedCategory) ? filteredCount.toLocaleString() : totalCount.toLocaleString()} 
+              {(searchTerm || selectedCategory) && filteredCount !== totalCount && (
+                <span> (filtered from {totalCount.toLocaleString()} total)</span>
+              )}
             </div>
+            
+            {totalCount > 50 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-7000">
+                <span className="font-medium">📄 Page {currentPage} of {totalPages}</span>
+                <span>•</span>
+                <span>50 products per page for optimal performance</span>
+              </div>
+            )}
           </div>
 
           {/* Advanced Settings Panel - Removed as we now use vector similarity exclusively */}
 
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-            <div className="overflow-x-auto max-w-full">
-              <table className="min-w-max divide-y divide-gray-200">
+          {/* ✅ SHOW LOADING STATE WHEN CHANGING PAGES */}
+          {isProcessing ? (
+            <div className="bg-white border border-gray-200 rounded-lg p-12 text-center">
+              <div className="flex flex-col items-center gap-4">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600"></div>
+                <h3 className="text-xl font-semibold text-gray-700">
+                  {processingProgress.statusMessage || 'Processing Products...'}
+                </h3>
+                <p className="text-gray-500">
+                  {processingProgress.statusMessage?.includes('cache') 
+                    ? 'Checking database for previously categorized products...'
+                    : 'Please wait while we categorize your products. The table will appear when complete.'}
+                </p>
+                {processingProgress.totalProducts > 0 && (
+                  <p className="text-sm text-gray-400">
+                    Processing {processingProgress.processed} of {processingProgress.totalProducts} products
+                    ({Math.round((processingProgress.processed / processingProgress.totalProducts) * 100)}%)
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : isLoadingPage ? (
+            <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+              <div className="flex flex-col items-center gap-3">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                <h3 className="text-lg font-semibold text-gray-700">Loading Page {currentPage}...</h3>
+                <p className="text-sm text-gray-500">Loading from IndexedDB...</p>
+              </div>
+            </div>
+          ) : displayedProducts.length === 0 ? (
+            <div className="bg-white border border-gray-200 rounded-lg p-12 text-center">
+              <div className="flex flex-col items-center gap-4">
+                <Filter className="h-16 w-16 text-gray-300" />
+                <h3 className="text-xl font-semibold text-gray-700">No products found</h3>
+                <p className="text-gray-500">
+                  {searchTerm || selectedCategory 
+                    ? "Try adjusting your search or filters" 
+                    : "Upload a CSV file to get started"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+              <div 
+                className="overflow-x-auto max-w-full"
+                style={{
+                  transform: 'translateZ(0)',
+                  willChange: 'transform',
+                  WebkitOverflowScrolling: 'touch'
+                }}
+              >
+                <table 
+                  className="min-w-max divide-y divide-gray-200"
+                  style={{
+                    contain: 'layout style paint'
+                  }}
+                >
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-80">
@@ -2165,8 +2782,14 @@ const AcesPiesCategorizationTool = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {paginatedProducts.map((product) => {
+                <tbody 
+                  className="bg-white divide-y divide-gray-200"
+                  style={{
+                    contain: 'layout style',
+                    contentVisibility: 'auto'
+                  }}
+                >
+                  {displayedProducts.map((product) => {
                     return (
                       <ProductRow
                         key={product.id}
@@ -2203,28 +2826,42 @@ const AcesPiesCategorizationTool = () => {
               </table>
             </div>
           </div>
+          )}
 
-          {totalPages > 1 && (
-            <div className="flex justify-center items-center space-x-2 mt-6">
+          {/* ✅ PAGINATION CONTROLS - Show if storage has multiple pages */}
+          {(totalPages > 1 || totalCount > itemsPerPage) && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
+              <p className="text-sm text-blue-800">
+                💾 <strong>Virtual Pagination Active:</strong> {totalCount.toLocaleString()} total products stored in IndexedDB.
+                Only {products.length} products loaded in memory for optimal performance.
+              </p>
+            </div>
+          )}
+          {(totalPages > 1 || totalCount > itemsPerPage) && (
+            <div className="flex justify-center items-center space-x-4 mt-6 p-4 bg-gray-50 rounded-lg border-2 border-blue-300">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                 disabled={currentPage === 1}
-                className="px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50 hover:bg-gray-50"
+                className="px-4 py-2 bg-blue-600 text-white border border-blue-700 rounded-lg disabled:opacity-50 disabled:bg-gray-400 hover:bg-blue-700 font-medium transition-all shadow-sm"
               >
-                Previous
+                ← Previous
               </button>
-              <span className="text-gray-600">
-                Page {currentPage} of {totalPages} (
-                {filteredProducts.length.toLocaleString()} products)
-              </span>
+              <div className="flex flex-col items-center">
+                <span className="text-lg font-bold text-gray-800">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <span className="text-sm text-gray-600">
+                  ({(searchTerm || selectedCategory) ? filteredCount.toLocaleString() : totalCount.toLocaleString()} total products)
+                </span>
+              </div>
               <button
                 onClick={() =>
                   setCurrentPage(Math.min(totalPages, currentPage + 1))
                 }
                 disabled={currentPage === totalPages}
-                className="px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50 hover:bg-gray-50"
+                className="px-4 py-2 bg-blue-600 text-white border border-blue-700 rounded-lg disabled:opacity-50 disabled:bg-gray-400 hover:bg-blue-700 font-medium transition-all shadow-sm"
               >
-                Next
+                Next →
               </button>
             </div>
           )}
