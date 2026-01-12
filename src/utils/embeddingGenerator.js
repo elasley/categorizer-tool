@@ -122,7 +122,7 @@ export const generateProductEmbeddings = async (
   );
 
   const pipe = await getEmbeddingPipeline();
-  const BATCH_SIZE = 64; // Process 64 products at once (optimal for browser memory)
+  const BATCH_SIZE = 20; // Process 20 products at once
   const productsWithEmbeddings = [];
 
   // Prepare texts array
@@ -163,7 +163,7 @@ export const generateProductEmbeddings = async (
       }
 
       if (progressCallback) {
-        progressCallback(batchEnd, texts.length);
+        await progressCallback(batchEnd, texts.length);
       }
 
       console.log(
