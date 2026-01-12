@@ -994,7 +994,7 @@ const AcesPiesCategorizationTool = () => {
           }
         } else {
           // Large dataset - use batching
-          const BATCH_SIZE = 500;
+          const BATCH_SIZE = 50;
           const totalBatches = Math.ceil(productsToInsert.length / BATCH_SIZE);
 
           for (let i = 0; i < totalBatches; i++) {
@@ -1138,7 +1138,7 @@ const AcesPiesCategorizationTool = () => {
       return;
     }
 
-    const BATCH_SIZE = 500; // Match edge function limit
+    const BATCH_SIZE = 20; // Smaller batches for better progress tracking
     const totalProducts = productsToProcess.length;
 
     console.log("\n🚀 Vector Similarity Categorization Starting...");
@@ -1172,18 +1172,18 @@ const AcesPiesCategorizationTool = () => {
       // Generate embeddings with progress updates
       productsToSend = await generateProductEmbeddings(
         productsForEmbedding,
-        (current, total) => {
-          // Update progress state
-          if (current % 10 === 0 || current === total) {
-            console.log(`🔧 Generated embeddings: ${current}/${total}`);
-            setProcessingProgress({
-              current: Math.floor((current / total) * 100),
-              total: 100,
-              processed: current,
-              totalProducts: total,
-              statusMessage: `Generating embeddings: ${current}/${total}`
-            });
-          }
+        async (current, total) => {
+          // Update progress state more frequently for better UI feedback
+          console.log(`🔧 Generated embeddings: ${current}/${total}`);
+          setProcessingProgress({
+            current: Math.floor((current / total) * 100),
+            total: 100,
+            processed: current,
+            totalProducts: total,
+            statusMessage: `Generating embeddings: ${current}/${total} (${Math.round((current/total)*100)}%)`
+          });
+          // Small delay to ensure UI updates
+          await new Promise(resolve => setTimeout(resolve, 0));
         }
       );
 
@@ -2456,7 +2456,7 @@ const AcesPiesCategorizationTool = () => {
                 </span>
                 <span className="text-blue-700 flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  {processingProgress.processed > 0 ? (
+                  {processingProgress.processed > 0 && processingProgress.totalProducts > 0 ? (
                     <>
                       {processingProgress.processed.toLocaleString()}/{processingProgress.totalProducts.toLocaleString()} products
                       <span className="font-bold ml-1">
@@ -2464,7 +2464,7 @@ const AcesPiesCategorizationTool = () => {
                       </span>
                     </>
                   ) : (
-                    <>Processing {products.length.toLocaleString()} products</>
+                    <>Processing {totalCount.toLocaleString()} products</>
                   )}
                 </span>
               </div>
@@ -2480,9 +2480,11 @@ const AcesPiesCategorizationTool = () => {
               </div>
               <div className="mt-1 text-xs text-blue-600 flex justify-between">
                 <span>
-                  {categorizationMethod === "openai"
-                    ? "Using OpenAI GPT for intelligent categorization"
-                    : "Using vector embeddings for semantic matching"}
+                  {processingProgress.statusMessage || (
+                    categorizationMethod === "openai"
+                      ? "Using OpenAI GPT for intelligent categorization"
+                      : "Using vector embeddings for semantic matching"
+                  )}
                 </span>
                 {processingProgress.total > 0 && processingProgress.current > 0 && (
                   <span className="font-medium">
