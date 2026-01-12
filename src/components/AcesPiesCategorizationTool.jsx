@@ -1130,7 +1130,7 @@ const AcesPiesCategorizationTool = () => {
         );
         const realErrors = errors.filter((e) => !e.includes("auto-corrected"));
 
-        toast.success(`✅ Successfully uploaded ${successCount} products (${productsToUpload.length} total)!`, { duration: 5000 });
+        toast.success(` Successfully uploaded ${successCount} products !`, { duration: 5000 });
 
         // Show warning about auto-corrections
         if (autoCorrections.length > 0) {
@@ -2037,7 +2037,7 @@ const AcesPiesCategorizationTool = () => {
         console.log(`   ⚡ React will render ONLY ${firstPage.length} rows!`);
         
         toast.success(
-          `✅ ${updatedProducts.length} Products Categorized! Page 1/${totalPages} • Click Next to view more`,
+          ` ${updatedProducts.length} Products Categorized!`,
           { duration: 6000 }
         );
       }
@@ -2643,35 +2643,7 @@ const AcesPiesCategorizationTool = () => {
                 Export All Results ({totalCount > 0 ? totalCount : products.length})
               </button>
               
-              {totalCount > 0 && (
-                <button
-                  onClick={async () => {
-                    const allProducts = await getAllProductsFromDB();
-                    const categorized = allProducts.filter(p => p.suggestedCategory && p.suggestedSubcategory).length;
-                    const uncategorized = allProducts.length - categorized;
-                    
-                    console.log(`\n📊 CATEGORIZATION CHECK:`);
-                    console.log(`   Total: ${allProducts.length}`);
-                    console.log(`   ✅ Categorized: ${categorized}`);
-                    console.log(`   ❌ Uncategorized: ${uncategorized}`);
-                    
-                    if (uncategorized === 0) {
-                      const confirm = window.confirm(`All ${allProducts.length} products are categorized! Clear IndexedDB now?`);
-                      if (confirm) {
-                        await clearDB();
-                        setTotalCount(0);
-                        toast.success('IndexedDB cleared! All products were categorized.', { duration: 5000 });
-                      }
-                    } else {
-                      alert(`⚠️ ${uncategorized} products still need categorization. Click OpenAI Auto-Suggest or Vector Similarity to categorize them.`);
-                    }
-                  }}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 shadow-sm hover:shadow-md transition-all"
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  Check & Clear DB
-                </button>
-              )}
+             
 
               <button
                 onClick={() => setShowTaxonomyManager(true)}

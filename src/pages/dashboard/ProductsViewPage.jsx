@@ -453,7 +453,6 @@ const ProductsViewPage = () => {
     if (!editingProduct) return;
 
     setSaving(true);
-    const loadingToast = toast.loading("Saving changes...");
 
     try {
       // Use cached data instead of API calls (0 API calls for lookups!)
@@ -556,11 +555,11 @@ const ProductsViewPage = () => {
 
       if (uploadError) throw uploadError;
 
-      toast.success("✅ Product updated successfully!", { id: loadingToast });
+      toast.success(" Product updated successfully!");
       setEditingProduct(null);
     } catch (error) {
       console.error("Error saving product:", error);
-      toast.error(`Failed to save: ${error.message}`, { id: loadingToast });
+      toast.error(`Failed to save: ${error.message}`);
     } finally {
       setSaving(false);
     }
