@@ -13,7 +13,7 @@ const UploadToSupabaseModal = ({
   const [description, setDescription] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   
-  const progress = uploadProgress || { percentage: 0, stage: '', isActive: false };
+  const progress = uploadProgress || { percentage: 0, stage: '', isActive: false, currentChunk: 0, totalChunks: 0, processedProducts: 0, totalProducts: 0 };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -74,22 +74,33 @@ const UploadToSupabaseModal = ({
           </div>
           
           {/* Progress Bar with Badge */}
-          {progress.isActive && (
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">{progress.stage}</span>
-                <span className="bg-white bg-opacity-20 px-3 py-1 rounded-full font-bold">
-                  {progress.percentage}%
-                </span>
-              </div>
-              <div className="w-full bg-white bg-opacity-20 rounded-full h-2.5 overflow-hidden">
-                <div 
-                  className="bg-white h-full rounded-full transition-all duration-300 ease-out shadow-lg"
-                  style={{ width: `${progress.percentage}%` }}
-                />
-              </div>
-            </div>
-          )}
+        
+{progress.isActive && (
+  <div className="mt-4 space-y-2">
+    <div className="flex items-center justify-between text-sm">
+      <span className="font-medium">
+        {progress.stage}
+        {/* Show chunk and product progress if available */}
+        {progress.currentChunk && progress.totalChunks && (
+          <> • Chunk {progress.currentChunk}/{progress.totalChunks}</>
+        )}
+        {progress.processedProducts && progress.totalProducts && (
+          <> • {progress.processedProducts}/{progress.totalProducts} products</>
+        )}
+      </span>
+      <span className="bg-white bg-opacity-20 px-3 py-1 rounded-full font-bold">
+        {progress.percentage}%
+      </span>
+    </div>
+    <div className="w-full bg-white bg-opacity-20 rounded-full h-2.5 overflow-hidden">
+      <div 
+        className="bg-white h-full rounded-full transition-all duration-300 ease-out shadow-lg"
+        style={{ width: `${progress.percentage}%` }}
+      />
+    </div>
+  </div>
+)}
+
         </div>
 
         {/* Form */}

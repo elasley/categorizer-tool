@@ -835,7 +835,11 @@ const AcesPiesCategorizationTool = () => {
         setUploadProgress({ 
           percentage: chunkProgress, 
           stage: `Generating embeddings... (${processedChunks}/${chunks.length} chunks - ${bulkEmbeddings.length}/${productsWithText.length} products)`, 
-          isActive: true 
+          isActive: true ,
+          processedProducts: bulkEmbeddings.length,
+          totalProducts: productsWithText.length,
+          currentChunk: processedChunks,
+          totalChunks: chunks.length,
         });
         
         const chunkResults = await Promise.all(

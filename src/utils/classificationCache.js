@@ -286,6 +286,156 @@ export const saveClassificationToCache = async (product, classification) => {
  * @param {Array} products - Products to check cache for
  * @returns {Map} Map of product_hash -> classification data
  */
+// export const batchGetCachedClassifications = async (products) => {
+//   try {
+//     const cacheMap = new Map();
+//     const foundProductHashes = new Set();
+
+//     console.log(
+//       `📦 Checking cache for ${products.length} products (EXACT match only)...`
+//     );
+
+//     // Validate input
+//     if (!products || products.length === 0) {
+//       console.log(`ℹ️  No products to check cache for`);
+//       return cacheMap;
+//     }
+
+//     // ONLY try exact hash matches - no similarity search
+//     const hashes = await Promise.all(
+//       products.map((p) =>
+//         generateProductHash(p.name || "", p.description || "")
+//       )
+//     );
+
+//     // ✅ FIX: Split hashes into chunks to avoid URL length limits (max ~500 hashes per request)
+//     const CHUNK_SIZE = 500;
+//     const hashChunks = [];
+//     for (let i = 0; i < hashes.length; i += CHUNK_SIZE) {
+//       hashChunks.push(hashes.slice(i, i + CHUNK_SIZE));
+//     }
+
+//     console.log(`📦 Split ${hashes.length} hashes into ${hashChunks.length} chunks`);
+
+//     // Process each chunk
+//     const allExactMatches = [];
+//     for (let i = 0; i < hashChunks.length; i++) {
+//       const chunk = hashChunks[i];
+//       console.log(`📦 Processing chunk ${i + 1}/${hashChunks.length} (${chunk.length} hashes)...`);
+      
+//       const { data: chunkMatches, error: chunkError } = await supabase
+//         .from("product_classifications")
+//         .select("*")
+//         .in("product_hash", chunk);
+
+//       if (chunkError) {
+//         console.warn(`⚠️ Error in chunk ${i + 1} hash lookup:`, chunkError);
+//         continue; // Skip this chunk, continue with others
+//       }
+
+//       if (chunkMatches && chunkMatches.length > 0) {
+//         allExactMatches.push(...chunkMatches);
+//       }
+//     }
+
+//     const exactMatches = allExactMatches;
+//     console.log(`✅ Found ${exactMatches.length} cached classifications across all chunks`);
+
+//     // Store exact matches
+//     if (exactMatches && exactMatches.length > 0) {
+//       exactMatches.forEach((item, index) => {
+//         // Validate item structure
+//         if (!item || typeof item !== "object" || !item.product_hash) {
+//           console.warn(`⚠️ Invalid cache item at index ${index}:`, item);
+//           return;
+//         }
+
+//         foundProductHashes.add(item.product_hash);
+
+//         // Only add to cache if we have valid category data
+//         if (item.suggested_category && item.suggested_category.trim() !== "") {
+//           const cacheEntry = {
+//             category: item.suggested_category || "",
+//             subcategory: item.suggested_subcategory || "",
+//             partType: item.suggested_parttype || "",
+//             confidence: Number(item.confidence) || 0,
+//             validationReason: `Cached (exact): ${
+//               item.validation_reason || "N/A"
+//             }`,
+//             cached: true,
+//             matchType: "exact",
+//           };
+
+//           cacheMap.set(item.product_hash, cacheEntry);
+//           console.log(
+//             `✅ Cached: "${item.product_name}" -> ${cacheEntry.category}/${cacheEntry.subcategory}`
+//           );
+//         } else {
+//           console.warn(
+//             `⚠️ Skipping cache entry with NULL/empty category for: ${item.product_name}`
+//           );
+//           foundProductHashes.delete(item.product_hash);
+//         }
+//       });
+
+//       console.log(`✅ Found ${exactMatches.length} exact cache matches`);
+//     } else {
+//       console.log(`ℹ️  No exact cache matches found`);
+//     }
+
+//     // OpenAI Auto-Suggest uses EXACT match only - no similarity search
+//     // Similarity search is handled by Vector Categorization (edge function)
+//     console.log(
+//       `🎯 OpenAI cache strategy: EXACT match only (no similarity search)`
+//     );
+
+//     // Update usage stats for exact matches only
+//     if (foundProductHashes.size > 0) {
+//       const allFoundHashes = Array.from(foundProductHashes);
+//       const { data: itemsToUpdate } = await supabase
+//         .from("product_classifications")
+//         .select("id, product_hash")
+//         .in("product_hash", allFoundHashes);
+
+//       if (itemsToUpdate && itemsToUpdate.length > 0) {
+//         // Get full records to access current usage_count
+//         const { data: fullRecords } = await supabase
+//           .from("product_classifications")
+//           .select("id, usage_count")
+//           .in(
+//             "id",
+//             itemsToUpdate.map((d) => d.id)
+//           );
+
+//         if (fullRecords) {
+//           // Update each record with incremented count
+//           for (const record of fullRecords) {
+//             await supabase
+//               .from("product_classifications")
+//               .update({
+//                 usage_count: record.usage_count + 1,
+//                 last_used_at: new Date().toISOString(),
+//               })
+//               .eq("id", record.id);
+//           }
+//         }
+//       }
+//     }
+
+//     const exactCount = foundProductHashes.size;
+//     const totalCached = foundProductHashes.size;
+
+//     console.log(
+//       `📊 Cache results: ${totalCached} exact matches out of ${products.length} products`
+//     );
+
+//     return cacheMap;
+//   } catch (error) {
+//     console.error("❌ Error in batchGetCachedClassifications:", error);
+//     return new Map();
+//   }
+// };
+
 export const batchGetCachedClassifications = async (products) => {
   try {
     const cacheMap = new Map();
@@ -308,33 +458,39 @@ export const batchGetCachedClassifications = async (products) => {
       )
     );
 
-    // ✅ FIX: Split hashes into chunks to avoid URL length limits (max ~500 hashes per request)
-    const CHUNK_SIZE = 500;
+    // CHUNKING: Use small chunks to avoid URL length/IN filter limits (safe for 10k+)
+    const CHUNK_SIZE = 50; // Safe for Supabase/PostgREST
     const hashChunks = [];
     for (let i = 0; i < hashes.length; i += CHUNK_SIZE) {
       hashChunks.push(hashes.slice(i, i + CHUNK_SIZE));
     }
 
-    console.log(`📦 Split ${hashes.length} hashes into ${hashChunks.length} chunks`);
+    console.log(`📦 Split ${hashes.length} hashes into ${hashChunks.length} chunks of ${CHUNK_SIZE}`);
 
     // Process each chunk
     const allExactMatches = [];
     for (let i = 0; i < hashChunks.length; i++) {
       const chunk = hashChunks[i];
-      console.log(`📦 Processing chunk ${i + 1}/${hashChunks.length} (${chunk.length} hashes)...`);
-      
-      const { data: chunkMatches, error: chunkError } = await supabase
-        .from("product_classifications")
-        .select("*")
-        .in("product_hash", chunk);
+      try {
+        console.log(`📦 Processing chunk ${i + 1}/${hashChunks.length} (${chunk.length} hashes)...`);
+        const { data: chunkMatches, error: chunkError } = await supabase
+          .from("product_classifications")
+          .select("*")
+          .in("product_hash", chunk);
 
-      if (chunkError) {
-        console.warn(`⚠️ Error in chunk ${i + 1} hash lookup:`, chunkError);
-        continue; // Skip this chunk, continue with others
-      }
+        if (chunkError) {
+          // Log and continue with next chunk
+          console.warn(`⚠️ Error in chunk ${i + 1} hash lookup:`, chunkError);
+          continue;
+        }
 
-      if (chunkMatches && chunkMatches.length > 0) {
-        allExactMatches.push(...chunkMatches);
+        if (chunkMatches && chunkMatches.length > 0) {
+          allExactMatches.push(...chunkMatches);
+        }
+      } catch (err) {
+        // Catch any unexpected errors per chunk
+        console.error(`❌ Unexpected error in chunk ${i + 1}:`, err);
+        continue;
       }
     }
 
