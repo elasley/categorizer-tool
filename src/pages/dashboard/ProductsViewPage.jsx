@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { AsyncPaginate } from "react-select-async-paginate";
 import { useParams, useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
@@ -86,7 +86,9 @@ const ProductsViewPage = () => {
         if (error) throw error;
       }
 
-      // Remove from local state
+      // Remove from local state (both displayed and all products)
+      const updatedAllProducts = allProducts.filter((p) => p.id !== product.id);
+      setAllProducts(updatedAllProducts);
       const updatedProducts = products.filter((p) => p.id !== product.id);
       setProducts(updatedProducts);
 
@@ -173,7 +175,10 @@ const ProductsViewPage = () => {
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
   const [products, setProducts] = useState([]);
+  const [allProducts, setAllProducts] = useState([]); // Store all products
+  const [displayedCount, setDisplayedCount] = useState(50); // Number of products to display
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [saving, setSaving] = useState(false);
   const [categories, setCategories] = useState([]);
@@ -181,11 +186,58 @@ const ProductsViewPage = () => {
   const [parttypes, setParttypes] = useState([]);
   const [filteredSubcategories, setFilteredSubcategories] = useState([]);
   const [filteredParttypes, setFilteredParttypes] = useState([]);
+  const tableContainerRef = useRef(null);
 
   useEffect(() => {
     loadProducts();
     loadCategoriesData();
   }, [fileUrl]);
+
+  // Load more products function
+  const loadMoreProducts = () => {
+    if (loadingMore || displayedCount >= allProducts.length) return;
+
+    setLoadingMore(true);
+    console.log(`📥 Loading more products... Current: ${displayedCount}, Total: ${allProducts.length}`);
+
+    // Simulate slight delay for smooth UX
+    setTimeout(() => {
+      const newCount = Math.min(displayedCount + 50, allProducts.length);
+      setDisplayedCount(newCount);
+      setLoadingMore(false);
+      console.log(`✅ Now displaying ${newCount} of ${allProducts.length} products`);
+    }, 300);
+  };
+
+  // Infinite scroll effect
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!tableContainerRef.current || loadingMore) return;
+
+      const { scrollTop, scrollHeight, clientHeight } = tableContainerRef.current;
+      
+      console.log('📜 Scroll event:', { scrollTop, scrollHeight, clientHeight, threshold: scrollHeight - 100 });
+      
+      // Check if scrolled to bottom (with 100px threshold)
+      if (scrollTop + clientHeight >= scrollHeight - 100) {
+        console.log('🎯 Reached bottom, loading more...');
+        loadMoreProducts();
+      }
+    };
+
+    const container = tableContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, [loadingMore, displayedCount, allProducts.length]);
+
+  // Update displayed products when displayedCount changes
+  useEffect(() => {
+    if (allProducts.length > 0) {
+      setProducts(allProducts.slice(0, displayedCount));
+    }
+  }, [displayedCount, allProducts]);
 
   const loadProducts = async () => {
     try {
@@ -267,7 +319,12 @@ const ProductsViewPage = () => {
 
       console.log("Parsed products:", parsedProducts);
 
-      setProducts(parsedProducts);
+      // Store all products and display first 50
+      setAllProducts(parsedProducts);
+      setProducts(parsedProducts.slice(0, 50));
+      setDisplayedCount(50);
+      
+      console.log(`✅ Loaded ${parsedProducts.length} products, displaying first 50`);
     } catch (error) {
       console.error("Error loading products:", error);
       toast.error("Failed to load products");
@@ -570,10 +627,27 @@ const ProductsViewPage = () => {
           </div>
         </div>
 
+        {/* Products Count Info */}
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            Showing <span className="font-bold text-gray-800">{products.length}</span> of{" "}
+            <span className="font-bold text-gray-800">{allProducts.length}</span> products
+          </div>
+          {displayedCount < allProducts.length && (
+            <div className="text-sm text-blue-600 font-medium">
+              Scroll down to load more products
+            </div>
+          )}
+        </div>
+
         {/* Products Table */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div 
+            ref={tableContainerRef}
+            className="overflow-x-auto max-h-[calc(100vh-50px)] overflow-y-auto"
+            style={{ scrollBehavior: 'smooth' }}
+          >
+            <table className="w-full ">
               <thead>
                 <tr className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white">
                   <th className="px-6 py-4 text-left text-xs font-bold uppercase">
@@ -599,7 +673,7 @@ const ProductsViewPage = () => {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y  divide-gray-200">
                 {products.map((product, index) => (
                   <tr
                     key={product.id}
@@ -692,7 +766,95 @@ const ProductsViewPage = () => {
                   fileName={fileName}
                 />
               </tbody>
+              
+              {/* Table Footer with Statistics */}
+              <tfoot className="bg-gradient-to-r from-gray-50 to-gray-100 border-t-2 border-gray-300 sticky bottom-0">
+                <tr>
+                  <td colSpan="7" className="px-6 py-4">
+                    <div className="flex items-center justify-between flex-wrap gap-4">
+                      {/* Total Products */}
+                      <div className="flex items-center gap-2">
+                        <Package className="w-5 h-5 text-blue-600" />
+                        <span className="text-sm font-semibold text-gray-700">
+                          Total Products:
+                        </span>
+                        <span className="text-lg font-bold text-blue-600">
+                          {allProducts.length.toLocaleString()}
+                        </span>
+                      </div>
+
+                      {/* Average Confidence */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-700">
+                          Avg Confidence:
+                        </span>
+                        <span className="text-lg font-bold text-green-600">
+                          {allProducts.length > 0
+                            ? Math.round(
+                                allProducts.reduce((sum, p) => sum + parseFloat(p.confidence || 0), 0) /
+                                  allProducts.length
+                              )
+                            : 0}
+                          %
+                        </span>
+                      </div>
+
+                      {/* Categories Count */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-700">
+                          Categories:
+                        </span>
+                        <span className="text-lg font-bold text-indigo-600">
+                          {new Set(allProducts.map(p => p.category).filter(Boolean)).size}
+                        </span>
+                      </div>
+
+                      {/* Status Breakdown */}
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                        <span className="text-sm font-semibold text-gray-700">
+                          Status:
+                        </span>
+                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 border border-green-300">
+                          {allProducts.length} Good
+                        </span>
+                      </div>
+
+                      {/* Showing X of Y */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-700">
+                          Showing:
+                        </span>
+                        <span className="text-lg font-bold text-gray-800">
+                          {products.length}
+                        </span>
+                        <span className="text-sm text-gray-500">
+                          of {allProducts.length}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </tfoot>
             </table>
+
+            {/* Loading More Indicator */}
+            {loadingMore && (
+              <div className="flex items-center justify-center py-6 border-t border-gray-200">
+                <Loader2 className="w-6 h-6 text-blue-500 animate-spin mr-2" />
+                <span className="text-gray-600 font-medium">Loading more products...</span>
+              </div>
+            )}
+
+            {/* End of List Message */}
+            {!loadingMore && displayedCount >= allProducts.length && allProducts.length > 50 && (
+              <div className="flex items-center justify-center py-6 border-t border-gray-200 bg-gray-50">
+                <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
+                <span className="text-gray-600 font-medium">
+                  All {allProducts.length} products loaded
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

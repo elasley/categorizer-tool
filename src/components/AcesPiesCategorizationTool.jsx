@@ -179,6 +179,7 @@ const AcesPiesCategorizationTool = () => {
   const [apiError, setApiError] = useState(null);
   const [lastUploadedFileInfo, setLastUploadedFileInfo] = useState(null);
   const [lastUploadType, setLastUploadType] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState({ percentage: 0, stage: '', isActive: false });
 
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showTaxonomyManager, setShowTaxonomyManager] = useState(false);
@@ -613,21 +614,31 @@ const AcesPiesCategorizationTool = () => {
   };
 
   const uploadProductsToSupabase = async (uploadMetadata) => {
-    if (!products || products.length === 0) {
+    // ✅ CRITICAL FIX: Get ALL products from IndexedDB, not just Redux 50
+    const allProductsFromDB = await getAllProductsFromDB();
+    const productsToUpload = allProductsFromDB.length > 0 ? allProductsFromDB : products;
+    
+    if (!productsToUpload || productsToUpload.length === 0) {
       toast.error("No products to upload");
       return;
     }
 
-    console.log("Starting product upload. Total products:", products.length);
+    console.log(`🚀 Starting product upload...`);
+    console.log(`📦 Products in Redux: ${products.length}`);
+    console.log(`📦 Products in IndexedDB: ${allProductsFromDB.length}`);
+    console.log(`✅ Uploading ALL ${productsToUpload.length} products to Supabase`);
     console.log("Upload metadata:", uploadMetadata);
 
     dispatch(setReduxUploadingProducts(true));
+    setUploadProgress({ percentage: 0, stage: 'Initializing...', isActive: true });
 
     let uploadHistoryId = null;
     let fileUrl = null;
 
     try {
-      // Step 1: Create CSV content from products
+      // Step 1: Create CSV content from ALL products
+      setUploadProgress({ percentage: 5, stage: 'Preparing CSV data...', isActive: true });
+      
       const csvHeaders = [
         "Name",
         "Description",
@@ -637,7 +648,7 @@ const AcesPiesCategorizationTool = () => {
         "Part Type",
         "Confidence",
       ];
-      const csvRows = products.map((p) => [
+      const csvRows = productsToUpload.map((p) => [
         p.name || p.productName || "",
         p.description || "",
         p.sku || p.partNumber || "",
@@ -654,6 +665,11 @@ const AcesPiesCategorizationTool = () => {
         ),
       ].join("\n");
 
+      console.log(`📄 CSV Content: ${csvContent.length} bytes, ${csvRows.length} rows`);
+
+      setUploadProgress({ percentage: 10, stage: 'Uploading CSV file to storage...', isActive: true });
+      console.log(`\n📤 Step 1: Uploading CSV file to Supabase storage...`);
+      
       const blob = new Blob([csvContent], { type: "text/csv" });
       const fileName = uploadMetadata.fileName.endsWith(".csv")
         ? uploadMetadata.fileName
@@ -674,11 +690,14 @@ const AcesPiesCategorizationTool = () => {
         throw new Error(`File upload failed: ${fileResult.error.message}`);
 
       fileUrl = filePath;
-      console.log("✅ File uploaded to storage:", fileUrl);
+      console.log("✅ Step 1 complete: File uploaded to storage:", fileUrl);
+      
+      setUploadProgress({ percentage: 20, stage: 'Creating upload record...', isActive: true });
+      console.log(`\n📝 Step 2: Creating upload history record...`);
 
       const user = userResult.data?.user;
 
-      // Create upload history record
+      // Create upload history record with ALL products count
       const { data: historyData, error: historyError } = await supabase
         .from("upload_history")
         .insert({
@@ -686,7 +705,7 @@ const AcesPiesCategorizationTool = () => {
           file_name: fileName,
           file_url: fileUrl,
           description: uploadMetadata.description || null,
-          products_count: products.length,
+          products_count: productsToUpload.length,
           status: "processing",
         })
         .select()
@@ -696,12 +715,14 @@ const AcesPiesCategorizationTool = () => {
         throw new Error(`History record failed: ${historyError.message}`);
 
       uploadHistoryId = historyData.id;
-      console.log("✅ Upload history created:", uploadHistoryId);
+      console.log("✅ Step 2 complete: Upload history created with ID:", uploadHistoryId);
+      
+      setUploadProgress({ percentage: 25, stage: 'Loading category mappings...', isActive: true });
+      console.log(`\n📥 Step 3: Loading category mappings with nested relations...`);
 
       // Step 5: Upload products to database
 
       // ULTRA-OPTIMIZED: Load ALL data in ONE query using nested foreign key relations
-      console.log("📥 Loading category mappings with nested relations...");
 
       const { data: categoriesData, error: categoriesError } =
         await supabase.from("categories").select(`
@@ -771,13 +792,15 @@ const AcesPiesCategorizationTool = () => {
       });
 
       console.log(
-        `✅ Loaded ${categoryMap.size} categories, ${subcategoryMap.size} subcategories, ${parttypeMap.size} parttypes in ONE query`
+        `✅ Step 3 complete: Loaded ${categoryMap.size} categories, ${subcategoryMap.size} subcategories, ${parttypeMap.size} parttypes in ONE query`
       );
+      
+      setUploadProgress({ percentage: 30, stage: 'Generating embeddings...', isActive: true });
 
       // ULTRA-FAST: Generate ALL embeddings in parallel chunks
-      console.log("🔄 Generating embeddings in parallel chunks...");
+      console.log(`\n🔧 Step 4: Generating embeddings in parallel chunks...`);
 
-      const productsWithText = products
+      const productsWithText = productsToUpload
         .map((p) => {
           const productName =
             p.name || p.productName || p.title || `Product-${Date.now()}`;
@@ -786,7 +809,9 @@ const AcesPiesCategorizationTool = () => {
         })
         .filter((item) => item.text && item.productName.trim() !== "");
 
-      // Process embeddings in chunks of 10 for optimal parallel processing
+      console.log(`📝 Processing ${productsWithText.length} products with valid text from ${productsToUpload.length} total`);
+
+      // Process embeddings in chunks of 20 for optimal parallel processing
       const CHUNK_SIZE = 20;
       const chunks = [];
       for (let i = 0; i < productsWithText.length; i += CHUNK_SIZE) {
@@ -794,7 +819,25 @@ const AcesPiesCategorizationTool = () => {
       }
 
       const bulkEmbeddings = [];
+      let processedChunks = 0;
+      
+      console.log(`\n🔧 Starting embedding generation for ${chunks.length} chunks (${productsWithText.length} products)`);
+      console.log(`📊 Progress will be shown for each chunk of ${CHUNK_SIZE} products\n`);
+      
       for (const chunk of chunks) {
+        processedChunks++;
+        
+        // Calculate smooth progress from 30% to 70% (40% range)
+        const chunkProgress = Math.round(30 + (processedChunks / chunks.length) * 40);
+        
+        console.log(`🔄 Chunk ${processedChunks}/${chunks.length}: Generating embeddings for ${chunk.length} products...`);
+        
+        setUploadProgress({ 
+          percentage: chunkProgress, 
+          stage: `Generating embeddings... (${processedChunks}/${chunks.length} chunks - ${bulkEmbeddings.length}/${productsWithText.length} products)`, 
+          isActive: true 
+        });
+        
         const chunkResults = await Promise.all(
           chunk.map(async (item) => {
             try {
@@ -805,14 +848,20 @@ const AcesPiesCategorizationTool = () => {
                 embeddingStr: `[${embedding.join(",")}]`,
               };
             } catch (error) {
+              console.error(`❌ Failed to generate embedding for: ${item.productName}`, error);
               return { ...item, embedding: null, embeddingStr: null };
             }
           })
         );
         bulkEmbeddings.push(...chunkResults);
+        
+        console.log(`✅ Chunk ${processedChunks}/${chunks.length} complete: ${chunkResults.length} embeddings generated (Total: ${bulkEmbeddings.length}/${productsWithText.length}) - Progress: ${chunkProgress}%`);
       }
 
-      console.log(`✅ Generated ${bulkEmbeddings.length} embeddings`);
+      console.log(`\n✅ All embeddings generated: ${bulkEmbeddings.length}/${productsWithText.length} products`);
+      console.log(`📊 Success rate: ${((bulkEmbeddings.filter(e => e.embedding).length / bulkEmbeddings.length) * 100).toFixed(1)}%\n`);
+      
+      setUploadProgress({ percentage: 70, stage: 'Preparing product data...', isActive: true });
 
       let successCount = 0;
       let errorCount = 0;
@@ -971,6 +1020,9 @@ const AcesPiesCategorizationTool = () => {
 
       // ULTRA-FAST: Single batch insert for small datasets (< 100 products)
       if (productsToInsert.length > 0) {
+        console.log(`\n📤 Starting database upload: ${productsToInsert.length} products ready to insert`);
+        setUploadProgress({ percentage: 75, stage: 'Uploading to database...', isActive: true });
+        
         if (productsToInsert.length <= 100) {
           // Small dataset - insert all at once
           console.log(
@@ -996,16 +1048,25 @@ const AcesPiesCategorizationTool = () => {
           // Large dataset - use batching
           const BATCH_SIZE = 500;
           const totalBatches = Math.ceil(productsToInsert.length / BATCH_SIZE);
+          
+          console.log(`📦 Large dataset: Splitting into ${totalBatches} batches of ${BATCH_SIZE} products each\n`);
 
           for (let i = 0; i < totalBatches; i++) {
+            // Calculate smooth progress from 75% to 95% (20% range)
+            const batchProgress = Math.round(75 + ((i + 1) / totalBatches) * 20);
+            
+            setUploadProgress({ 
+              percentage: batchProgress, 
+              stage: `Uploading batch ${i + 1}/${totalBatches}...`, 
+              isActive: true 
+            });
+            
             const start = i * BATCH_SIZE;
             const end = Math.min(start + BATCH_SIZE, productsToInsert.length);
             const batch = productsToInsert.slice(start, end);
 
             console.log(
-              `Uploading batch ${i + 1}/${totalBatches} (${
-                batch.length
-              } products)...`
+              `📤 Uploading batch ${i + 1}/${totalBatches} (${batch.length} products) - Progress: ${batchProgress}%`
             );
 
             const { error: insertError } = await supabase
@@ -1024,13 +1085,14 @@ const AcesPiesCategorizationTool = () => {
               console.log(
                 `✅ Batch ${i + 1}/${totalBatches}: Successfully inserted ${
                   batch.length
-                } products`
+                } products (Total: ${successCount}/${productsToInsert.length})`
               );
             }
           }
         }
 
-        console.log(`✅ Total successfully inserted: ${successCount} products`);
+        console.log(`\nDatabase upload complete: ${successCount}/${productsToInsert.length} products successfully inserted`);
+        setUploadProgress({ percentage: 95, stage: 'Finalizing...', isActive: true });
       }
 
       console.log(
@@ -1061,12 +1123,14 @@ const AcesPiesCategorizationTool = () => {
       }
 
       if (successCount > 0) {
+        setUploadProgress({ percentage: 100, stage: 'Upload complete!', isActive: true });
+        
         const autoCorrections = errors.filter((e) =>
           e.includes("auto-corrected")
         );
         const realErrors = errors.filter((e) => !e.includes("auto-corrected"));
 
-        toast.success(`Successfully uploaded  products!`, { duration: 5000 });
+        toast.success(`✅ Successfully uploaded ${successCount} products (${productsToUpload.length} total)!`, { duration: 5000 });
 
         // Show warning about auto-corrections
         if (autoCorrections.length > 0) {
@@ -1086,6 +1150,12 @@ const AcesPiesCategorizationTool = () => {
         setLastUploadedFileInfo(productsFileInfo); // Save the uploaded file info
         setLastUploadType("products");
         // DON'T clear productsFileInfo - keep it visible
+        
+        // Small delay to show 100% completion
+        setTimeout(() => {
+          setUploadProgress({ percentage: 0, stage: '', isActive: false });
+        }, 1000);
+        
         // Redirect to reports page after successful upload
         setTimeout(() => {
           navigate("/reports");
@@ -1122,6 +1192,7 @@ const AcesPiesCategorizationTool = () => {
       toast.error(`Failed to upload products: ${error.message}`, {
         duration: 6000,
       });
+      setUploadProgress({ percentage: 0, stage: '', isActive: false });
     } finally {
       dispatch(setReduxUploadingProducts(false));
     }
@@ -1389,7 +1460,7 @@ const AcesPiesCategorizationTool = () => {
         
         const totalPages = Math.ceil(updatedProducts.length / itemsPerPage);
         toast.success(
-          `✅ ${updatedProducts.length} Products Categorized! Page 1/${totalPages} • Click Next to view more`,
+          ` ${updatedProducts.length} Products Categorized!`,
           { duration: 6000 }
         );
       } else {
@@ -2101,9 +2172,9 @@ const AcesPiesCategorizationTool = () => {
       console.log('✅ All products categorized! Clearing IndexedDB...');
       await clearDB();
       setTotalCount(0);
-      toast.success(`✅ Exported ${productsToExport.length} fully categorized products! IndexedDB cleared.`, { duration: 5000 });
+      toast.success(` Exported ${productsToExport.length} fully categorized products!`, { duration: 5000 });
     } else {
-      toast.success(`✅ Exported ${productsToExport.length} products`, { duration: 3000 });
+      toast.success(`Exported ${productsToExport.length} products`, { duration: 3000 });
     }
   };
 
@@ -2541,7 +2612,7 @@ const AcesPiesCategorizationTool = () => {
 
               <button
                 onClick={() => setShowUploadModal(true)}
-                disabled={uploadingProducts}
+                disabled={uploadingProducts || (products.length === 0 && totalCount === 0)}
                 className={`px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm ${
                   uploadingProducts
                     ? "bg-gray-400 cursor-not-allowed text-white"
@@ -2556,7 +2627,7 @@ const AcesPiesCategorizationTool = () => {
                 ) : (
                   <>
                     <Upload className="w-4 h-4" />
-                    <span>Permanently Stored</span>
+                    <span>Permanently Store ({totalCount > 0 ? totalCount : products.length})</span>
                   </>
                 )}
               </button>
@@ -2828,16 +2899,9 @@ const AcesPiesCategorizationTool = () => {
           </div>
           )}
 
-          {/* ✅ PAGINATION CONTROLS - Show if storage has multiple pages */}
-          {(totalPages > 1 || totalCount > itemsPerPage) && (
-            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
-              <p className="text-sm text-blue-800">
-                💾 <strong>Virtual Pagination Active:</strong> {totalCount.toLocaleString()} total products stored in IndexedDB.
-                Only {products.length} products loaded in memory for optimal performance.
-              </p>
-            </div>
-          )}
-          {(totalPages > 1 || totalCount > itemsPerPage) && (
+        
+          
+          {!isProcessing && !isLoadingPage && (totalPages > 1 || totalCount > itemsPerPage) && (
             <div className="flex justify-center items-center space-x-4 mt-6 p-4 bg-gray-50 rounded-lg border-2 border-blue-300">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
@@ -3069,7 +3133,8 @@ const AcesPiesCategorizationTool = () => {
         isOpen={showUploadModal}
         onClose={() => setShowUploadModal(false)}
         onUpload={uploadProductsToSupabase}
-        productsCount={products.length}
+        productsCount={totalCount > 0 ? totalCount : products.length}
+        uploadProgress={uploadProgress}
       />
     </div>
   );

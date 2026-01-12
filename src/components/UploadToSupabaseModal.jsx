@@ -7,10 +7,13 @@ const UploadToSupabaseModal = ({
   onClose,
   onUpload,
   productsCount,
+  uploadProgress,
 }) => {
   const [fileName, setFileName] = useState("");
   const [description, setDescription] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  
+  const progress = uploadProgress || { percentage: 0, stage: '', isActive: false };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -69,6 +72,24 @@ const UploadToSupabaseModal = ({
               <X className="w-5 h-5" />
             </button>
           </div>
+          
+          {/* Progress Bar with Badge */}
+          {progress.isActive && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">{progress.stage}</span>
+                <span className="bg-white bg-opacity-20 px-3 py-1 rounded-full font-bold">
+                  {progress.percentage}%
+                </span>
+              </div>
+              <div className="w-full bg-white bg-opacity-20 rounded-full h-2.5 overflow-hidden">
+                <div 
+                  className="bg-white h-full rounded-full transition-all duration-300 ease-out shadow-lg"
+                  style={{ width: `${progress.percentage}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Form */}
