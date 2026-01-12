@@ -34,7 +34,7 @@ const DashboardHome = () => {
       const { count: categorized, error: catErr } = await supabase
         .from("categories")
         .select("*", { count: "exact", head: true })
-        .eq("user_id", user.id);
+        .or(`user_id.eq.${user.id},user_id.is.null`);
       if (!catErr) setCategorizedCount(categorized || 0);
 
       // Fetch total upload files for current user

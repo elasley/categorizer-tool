@@ -73,7 +73,7 @@ const ParttypesPage = () => {
         .range(0, BATCH_SIZE - 1);
 
       if (user?.id) {
-        query = query.eq("user_id", user.id);
+        query = query.or(`user_id.eq.${user.id},user_id.is.null`);
       }
 
       const { data, error, count } = await query;
