@@ -249,6 +249,9 @@ const Categories = () => {
   const [deleteItem, setDeleteItem] = useState(null);
   const [deleteType, setDeleteType] = useState("");
   const [deleting, setDeleting] = useState(false);
+  // For cascade delete modal
+  const [referencedProductCount, setReferencedProductCount] = useState(null);
+  const [checkingReferences, setCheckingReferences] = useState(false);
   // Add state for optimistic updates
   const [optimisticCategories, setOptimisticCategories] = useState(null);
   // Add state for selected transfer item per category/subcategory
@@ -516,37 +519,77 @@ const Categories = () => {
   };
 
   // Delete handlers
-  const handleDeleteClick = (item, type) => {
+  // Enhanced delete click handler: check for referenced products
+  const handleDeleteClick = async (item, type) => {
     setDeleteItem(item);
     setDeleteType(type);
     setShowDeleteModal(true);
+    setReferencedProductCount(null);
+    setCheckingReferences(true);
+    // Check for referenced products
+    let filter = "";
+    if (type === "category") {
+      filter = `category_id.eq.${item.id}`;
+    } else if (type === "subcategory") {
+      filter = `subcategory_id.eq.${item.id}`;
+    } else if (type === "parttype") {
+      filter = `parttype_id.eq.${item.id}`;
+    }
+    try {
+      const { count, error } = await supabase
+        .from("products")
+        .select("id", { count: "exact", head: true })
+        .or(`user_id.eq.${user.id},user_id.is.null`)
+        .filter(filter.split(".")[0], filter.split(".")[1], filter.split(".")[2]);
+      setReferencedProductCount(count || 0);
+    } catch (e) {
+      setReferencedProductCount(0);
+    } finally {
+      setCheckingReferences(false);
+    }
   };
 
+  // Enhanced delete handler: cascade delete products if referenced
   const handleDelete = async () => {
     if (!deleteItem || !deleteType) return;
-
     setDeleting(true);
-
     const tableName =
       deleteType === "category"
         ? "categories"
         : deleteType === "subcategory"
         ? "subcategories"
         : "parttypes";
-
+    let filter = "";
+    if (deleteType === "category") {
+      filter = `category_id.eq.${deleteItem.id}`;
+    } else if (deleteType === "subcategory") {
+      filter = `subcategory_id.eq.${deleteItem.id}`;
+    } else if (deleteType === "parttype") {
+      filter = `parttype_id.eq.${deleteItem.id}`;
+    }
     try {
+      // If there are referenced products, delete them first
+      if (referencedProductCount > 0) {
+        // Delete products referencing this entity
+        const { error: prodDelError } = await supabase
+          .from("products")
+          .delete()
+          .or(`user_id.eq.${user.id},user_id.is.null`)
+          .filter(filter.split(".")[0], filter.split(".")[1], filter.split(".")[2]);
+        if (prodDelError) throw prodDelError;
+      }
+      // Now delete the entity
       const { error } = await supabase
         .from(tableName)
         .delete()
         .eq("id", deleteItem.id);
-
       if (error) throw error;
-
       toast.success(`${deleteType} deleted successfully`);
       setShowDeleteModal(false);
       setDeleteItem(null);
       setDeleteType("");
-      loadAllData();
+      setReferencedProductCount(null);
+      await loadAllData();
     } catch (error) {
       console.error("Error deleting:", error);
       toast.error("Failed to delete");
@@ -1410,6 +1453,7 @@ const Categories = () => {
                       setShowDeleteModal(false);
                       setDeleteItem(null);
                       setDeleteType("");
+                      setReferencedProductCount(null);
                     }}
                     className="p-2 hover:bg-gray-100 rounded-lg"
                   >
@@ -1426,23 +1470,35 @@ const Categories = () => {
                         <p className="text-gray-900 font-medium mb-1">
                           Delete "{deleteItem.name}"?
                         </p>
-                        <p className="text-sm text-gray-600">
-                          {deleteType === "category" &&
-                            "This will also delete all subcategories and part types under this category."}
-                          {deleteType === "subcategory" &&
-                            "This will also delete all part types under this subcategory."}
-                          {deleteType === "parttype" &&
-                            "This part type will be deleted."}
-                        </p>
-                        <p className="text-sm text-gray-600 mt-2">
-                          This cannot be undone.
-                        </p>
+                        {checkingReferences ? (
+                          <p className="text-sm text-gray-600">Checking for referenced products...</p>
+                        ) : referencedProductCount > 0 ? (
+                          <>
+                            <p className="text-sm text-red-600 font-semibold">
+                              {referencedProductCount} product{referencedProductCount !== 1 ? "s" : ""} reference this {deleteType}.<br />
+                              Deleting will also remove these products.
+                            </p>
+                            <p className="text-sm text-gray-600 mt-2">This cannot be undone.</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm text-gray-600">
+                              {deleteType === "category" &&
+                                "This will also delete all subcategories and part types under this category."}
+                              {deleteType === "subcategory" &&
+                                "This will also delete all part types under this subcategory."}
+                              {deleteType === "parttype" &&
+                                "This part type will be deleted."}
+                            </p>
+                            <p className="text-sm text-gray-600 mt-2">This cannot be undone.</p>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-3 mt-6">
                       <button
                         onClick={handleDelete}
-                        disabled={deleting}
+                        disabled={deleting || checkingReferences}
                         className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {deleting ? (
@@ -1459,6 +1515,7 @@ const Categories = () => {
                           setShowDeleteModal(false);
                           setDeleteItem(null);
                           setDeleteType("");
+                          setReferencedProductCount(null);
                         }}
                         disabled={deleting}
                         className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
